@@ -1,0 +1,902 @@
+// prisma/schema.prisma
+
+// generator client {
+//   provider = "prisma-client-js"
+// }
+
+// datasource db {
+//   provider = "postgresql"
+//   url      = env("DATABASE_URL")
+// }
+
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id         String     @id @default(uuid()) @db.Uuid
+  email      String     @unique
+  password   String // 🔐 new
+  role       Role[]
+  name       String
+  phone      String? // ☎️ optional
+  kycStatus  KycStatus  @default(pending_verification)
+  isVerified Boolean    @default(false)
+  status     UserStatus @default(ACTIVE) // 🆕 Admin-controlled status
+  createdAt  DateTime   @default(now())
+
+  //Profiles
+  providerProfile ProviderProfile?
+  customerProfile CustomerProfile?
+  resume          Resume? // 📄 1-to-1
+
+  //Relations
+  requests           ServiceRequest[] @relation("CustomerRequests")
+  projectsAsCustomer Project[]        @relation("CustomerProjects")
+  projectsAsProvider Project[]        @relation("ProviderProjects")
+  matches            AiMatch[]
+  reviewsGiven       Review[]         @relation("Reviewer")
+  reviewsReceived    Review[]         @relation("Recipient")
+  sentMessages       Message[]        @relation("SentMessages")
+  receivedMessages   Message[]        @relation("ReceivedMessages")
+  invoicesAsProvider Invoice[]        @relation("InvoicesAsProvider")
+  invoicesAsCustomer Invoice[]        @relation("InvoicesAsCustomer")
+  Proposal           Proposal[]
+  KycDocument        KycDocument[]
+  // Saved providers relations
+  savedProviders     SavedProvider[]  @relation("UserSavedProviders")
+  savedByUsers       SavedProvider[]  @relation("ProviderSavedByUsers")
+  // Saved companies relations
+  savedCompanies     SavedCompany[]   @relation("UserSavedCompanies")
+  savedByProviders   SavedCompany[]   @relation("CompanySavedByProviders")
+
+  //Notifications
+  notifications Notification[]
+
+  Dispute Dispute[]
+
+  ReviewReply ReviewReply[]
+
+  settings Settings?
+}
+
+model Notification {
+  id        String   @id @default(uuid()) @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String   @db.Uuid // ✅ fix
+  title     String // proposal, payment, message, system
+  type      String // proposal, payment, message, system
+  content   String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  metadata  Json? // Store additional payment info
+}
+
+model ProviderProfile {
+  id     String @id @default(uuid()) @db.Uuid
+  user   User   @relation(fields: [userId], references: [id])
+  userId String @unique @db.Uuid
+
+  // Bank account details for manual payouts
+  payoutMethods PayoutMethod[]
+
+  // Profile
+  bio             String?
+  major           String?  @db.VarChar(255) // 🆕 Major/Title field
+  location        String?
+  hourlyRate      Float?
+  availability    String?  @db.VarChar(50)
+  languages       String[] // 🆕 Spoken languages
+  website         String? // 🆕 Personal or company site
+  portfolioLinks  String[] // 🆕 Portfolio links (GitHub, LinkedIn, etc.)
+  profileImageUrl String?  @map("profile_image_url") // 🆕 Profile image
+
+  //Performance Metrics
+  rating        Decimal @default(0.00) @db.Decimal(3, 2)
+  totalReviews  Int     @default(0) @map("total_reviews")
+  totalProjects Int     @default(0) @map("total_projects")
+  totalEarnings Decimal @default(0.00) @map("total_earnings") @db.Decimal(15, 2)
+  viewsCount    Int     @default(0) @map("views_count")
+  successRate   Decimal @default(0.00) @map("success_rate") @db.Decimal(5, 2)
+  responseTime  Int     @default(0) @map("response_time")
+  isFeatured    Boolean @default(false) @map("is_featured")
+
+  completion Int? // 🆕 Completion %
+
+  //Skills & Work pref
+  skills                   String[]
+  certifications           Certification[] // ➕ relation
+  portfolios               ProjectPortfolio[] // ➕ relation
+  performance              PerformanceStat? // ➕ relation
+  yearsExperience          Int?
+  minimumProjectBudget     Decimal?           @map("minimum_project_budget") @db.Decimal(10, 2)
+  maximumProjectBudget     Decimal?           @map("maximum_project_budget") @db.Decimal(10, 2)
+  preferredProjectDuration String?            @map("preferred_project_duration") @db.VarChar(50)
+  workPreference           String             @default("remote") @map("work_preference") @db.VarChar(50)
+  teamSize                 Int                @default(1) @map("team_size")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("users")
+}
+
+enum PayoutMethodType {
+  BANK
+  PAYPAL
+  PAYONEER
+  WISE
+  EWALLET
+}
+
+model PayoutMethod {
+  id                String          @id @default(cuid())
+  providerProfileId String          @db.Uuid
+  providerProfile   ProviderProfile @relation(fields: [providerProfileId], references: [id])
+
+  type PayoutMethodType
+
+  // Common fields
+  label String? // e.g. "Main Bank", "PayPal Business"
+
+  // Bank Transfer Fields
+  bankName      String?
+  accountNumber String?
+  accountHolder String?
+
+  // PayPal / Payoneer / Wise / E-wallet
+  accountEmail String?
+  walletId     String? // for e-wallet numbers (Touch 'n Go, etc.)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Settings {
+  id     Int    @id @default(autoincrement())
+  userId String @unique @db.Uuid // ✅ make it unique
+  user   User   @relation(fields: [userId], references: [id])
+
+  // 🔔 Notifications
+  emailNotifications Boolean @default(true)
+  smsNotifications   Boolean @default(false)
+  projectUpdates     Boolean @default(true)
+  marketingEmails    Boolean @default(false)
+  weeklyReports      Boolean @default(true)
+
+  // 🛡️ Privacy
+  profileVisibility String  @default("public") // "public" | "verified" | "private"
+  showEmail         Boolean @default(false)
+  showPhone         Boolean @default(false)
+  allowMessages     Boolean @default(true)
+
+  // 💳 Billing
+  payments Payment[]
+
+  // 🔐 Security
+  twoFactorEnabled   Boolean   @default(false)
+  lastPasswordChange DateTime?
+  deletedAt          DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CustomerProfile {
+  id     String @id @default(uuid()) @db.Uuid
+  user   User   @relation(fields: [userId], references: [id])
+  userId String @unique @db.Uuid
+
+  //Identity
+  description     String?
+  industry        String?
+  location        String?
+  website         String? // 🆕 Personal or company site
+  profileImageUrl String?  @map("profile_image_url") // 🆕 Profile image
+  socialLinks     Json? // LinkedIn, Twitter, etc.
+  languages       String[] // 🆕 Spoken languages
+
+  // Business Profile
+  companySize     String?  @map("company_size") @db.VarChar(50)
+  employeeCount   Int?     @map("employee_count")
+  establishedYear Int?     @map("established_year")
+  annualRevenue   Decimal? @db.Decimal(12, 2)
+  fundingStage    String? // e.g. Bootstrap, Seed, Series A
+
+  // Hiring Preferences
+  preferredContractTypes String[]
+  averageBudgetRange     String?
+  remotePolicy           String? // On-site, Remote, Hybrid
+  hiringFrequency        String? // occasional, regular, enterprise
+  categoriesHiringFor    String[]
+
+  // Platform Engagement
+  completion     Int?
+  rating         Float?    @default(0.0)
+  reviewCount    Int?      @default(0)
+  totalSpend     Decimal?  @db.Decimal(12, 2)
+  projectsPosted Int?      @default(0)
+  lastActiveAt   DateTime?
+
+  // Branding & Culture
+  mission      String?
+  values       String[]
+  benefits     Json?
+  mediaGallery String[]
+
+  // Trust & Compliance
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("companies")
+}
+
+model Certification {
+  id         String          @id @default(uuid()) @db.Uuid
+  profile    ProviderProfile @relation(fields: [profileId], references: [id])
+  profileId  String          @db.Uuid
+  name       String
+  issuer     String
+  issuedDate DateTime
+  verified   Boolean         @default(false)
+
+  // NEW
+  serialNumber String?
+  sourceUrl    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt // <-- add @default(now())
+
+  @@index([issuer])
+  @@index([serialNumber])
+}
+
+model PerformanceStat {
+  id             String          @id @default(uuid()) @db.Uuid
+  profile        ProviderProfile @relation(fields: [profileId], references: [id])
+  profileId      String          @unique @db.Uuid
+  totalProjects  Int             @default(0)
+  completionRate Float           @default(0)
+  onTimeDelivery Float           @default(0)
+  responseTime   String          @default("N/A") // Example: "2 hours"
+  repeatClients  Float           @default(0)
+}
+
+model ProjectPortfolio {
+  id          String          @id @default(uuid()) @db.Uuid
+  profile     ProviderProfile @relation(fields: [profileId], references: [id])
+  profileId   String          @db.Uuid
+  title       String
+  description String
+  techStack   String[] // Tags: React, Node.js etc
+  client      String?
+  date        DateTime
+  imageUrl    String?
+  externalUrl String? // Optional live link
+}
+
+model Review {
+  id                    String   @id @default(uuid()) @db.Uuid
+  // Many reviews can belong to one project
+  project               Project  @relation(fields: [projectId], references: [id])
+  projectId             String   @db.Uuid
+  reviewer              User     @relation("Reviewer", fields: [reviewerId], references: [id])
+  reviewerId            String   @db.Uuid
+  recipient             User     @relation("Recipient", fields: [recipientId], references: [id])
+  recipientId           String   @db.Uuid
+  company               String? // Optional: shown as "TechStart Sdn Bhd"
+  role                  String? // e.g. “Project Manager”
+  content               String // The review text
+  rating                Float // e.g. 4.9
+  communicationRating   Int?     @map("communication_rating")
+  qualityRating         Int?     @map("quality_rating")
+  timelinessRating      Int?     @map("timeliness_rating")
+  professionalismRating Int?     @map("professionalism_rating")
+  createdAt             DateTime @default(now())
+
+  ReviewReply ReviewReply[]
+}
+
+model ReviewReply {
+  id        String   @id @default(uuid()) @db.Uuid
+  review    Review   @relation(fields: [reviewId], references: [id])
+  reviewId  String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String   @db.Uuid
+  content   String
+  createdAt DateTime @default(now())
+}
+
+model Resume {
+  id          String   @id @default(uuid()) @db.Uuid
+  user        User     @relation(fields: [userId], references: [id])
+  userId      String   @unique @db.Uuid
+  fileUrl     String // S3 or local path
+  description String? // Summarized by LangChain
+  uploadedAt  DateTime @default(now())
+}
+
+model ServiceRequest {
+  id           String   @id @default(uuid()) @db.Uuid
+  title        String
+  description  String
+  category     String
+  budgetMin    Float
+  budgetMax    Float
+  skills       String[]
+  timeline     String?
+  priority     String?
+  ndaSigned    Boolean  @default(false)
+  requirements String?  @db.Text // Markdown text field
+  deliverables String?  @db.Text // Markdown text field
+
+  status RequestStatus @default(OPEN)
+
+  // Ownership & lifecycle
+  customer   User     @relation("CustomerRequests", fields: [customerId], references: [id])
+  customerId String   @db.Uuid
+  projectId  String?  @db.Uuid
+  project    Project? @relation(fields: [projectId], references: [id])
+
+  // Drafted milestones by the company (optional)
+  milestones ServiceRequestMilestone[]
+
+  // Proposals & matching
+  proposals Proposal[]
+  matches   AiMatch[]
+
+  // (Optional) record of which milestone set was chosen
+  acceptedProposalId    String?          @db.Uuid
+  chosenMilestoneSource MilestoneSource? // COMPANY or PROVIDER
+
+  // Milestone negotiation fields (Option A)
+  milestoneDraft            Json?
+  milestoneDraftVersion     Int     @default(0)
+  milestoneCompanyAccepted  Boolean @default(false)
+  milestoneProviderAccepted Boolean @default(false)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("service_requests")
+}
+
+model ServiceRequestMilestone {
+  id               String         @id @default(uuid()) @db.Uuid
+  serviceRequest   ServiceRequest @relation(fields: [serviceRequestId], references: [id])
+  serviceRequestId String         @db.Uuid
+
+  title       String
+  description String?
+  amount      Float
+  dueDate     DateTime?
+  order       Int       @default(1)
+
+  status MilestoneStatus @default(PENDING)
+  source MilestoneSource @default(COMPANY) // fixed for SR milestones
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("service_request_milestones")
+}
+
+model Proposal {
+  id         String @id @default(uuid()) @db.Uuid
+  // Relations
+  providerId String @db.Uuid
+  provider   User   @relation(fields: [providerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  serviceRequestId String         @db.Uuid
+  serviceRequest   ServiceRequest @relation(fields: [serviceRequestId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  // Business fields
+  bidAmount      Float? // consider Decimal later if you want exact money
+  status         ProposalStatus @default(PENDING)
+  deliveryTime   Int // in days
+  coverLetter    String         @db.Text
+  attachmentUrls String[]       @default([]) // e.g., PDF proposal or portfolio
+  attachmentUrl  String? // e.g., PDF proposal or portfolio
+
+  // Provider-proposed milestones for this proposal
+  milestones ProposalMilestone[]
+
+  // Timestamps
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  Milestone Milestone[]
+}
+
+model ProposalMilestone {
+  id         String   @id @default(uuid()) @db.Uuid
+  proposal   Proposal @relation(fields: [proposalId], references: [id])
+  proposalId String   @db.Uuid
+
+  title       String
+  description String?
+  amount      Float
+  dueDate     DateTime?
+  order       Int       @default(1)
+
+  status MilestoneStatus @default(PENDING)
+  source MilestoneSource @default(PROVIDER) // fixed for proposal milestones
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("proposal_milestones")
+}
+
+model AiMatch {
+  id         String         @id @default(uuid()) @db.Uuid
+  request    ServiceRequest @relation(fields: [requestId], references: [id])
+  requestId  String         @db.Uuid
+  provider   User           @relation(fields: [providerId], references: [id])
+  providerId String         @db.Uuid
+  matchScore Float
+  aiReason   String
+}
+
+model Project {
+  id           String   @id @default(uuid()) @db.Uuid
+  title        String
+  description  String
+  category     String
+  budgetMin    Float
+  budgetMax    Float
+  skills       String[]
+  timeline     String?
+  priority     String?
+  ndaSigned    Boolean  @default(false)
+  requirements String?  @db.Text // Markdown text field
+  deliverables String?  @db.Text // Markdown text field
+
+  status ProjectStatus
+
+  // Ownership & lifecycle
+  customer   User   @relation("CustomerProjects", fields: [customerId], references: [id])
+  customerId String @db.Uuid
+  provider   User   @relation("ProviderProjects", fields: [providerId], references: [id])
+  providerId String @db.Uuid
+
+  // Milestone approval workflow
+  milestonesLocked     Boolean   @default(false) @map("milestones_locked")
+  companyApproved      Boolean   @default(false) @map("company_approved")
+  providerApproved     Boolean   @default(false) @map("provider_approved")
+  milestonesApprovedAt DateTime? @map("milestones_approved_at")
+
+  // Final milestones (snapshot after acceptance)
+  milestones Milestone[]
+
+  payments       Payment[]
+  reviews        Review[] // 1-to-1
+  messages       Message[]
+  invoices       Invoice[]
+  Dispute        Dispute[]
+  ServiceRequest ServiceRequest[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+}
+
+model Invoice {
+  id            String  @id @default(uuid()) @db.Uuid
+  invoiceNumber String  @unique @map("invoice_number") @db.VarChar(100)
+  customer      User    @relation("InvoicesAsCustomer", fields: [customerId], references: [id], onDelete: Cascade)
+  customerId    String  @map("customer_id") @db.Uuid
+  providerId    String  @map("provider_id") @db.Uuid
+  projectId     String? @map("project_id") @db.Uuid
+  paymentId     String? @db.Uuid
+
+  subtotal       Decimal @db.Decimal(10, 2)
+  taxAmount      Decimal @default(0.00) @map("tax_amount") @db.Decimal(10, 2)
+  discountAmount Decimal @default(0.00) @map("discount_amount") @db.Decimal(10, 2)
+  platformFee    Decimal @default(0.00) @db.Decimal(10, 2) // 👈 new
+  totalAmount    Decimal @map("total_amount") @db.Decimal(10, 2)
+  currency       String  @default("MYR") @db.VarChar(3)
+
+  status    String    @default("draft") @db.VarChar(50)
+  issueDate DateTime  @map("issue_date") @db.Date
+  dueDate   DateTime  @map("due_date") @db.Date
+  paidDate  DateTime? @map("paid_date") @db.Date
+
+  notes       String?
+  terms       String?
+  invoiceData Json?   @map("invoice_data")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  project  Project?  @relation(fields: [projectId], references: [id])
+  provider User      @relation("InvoicesAsProvider", fields: [providerId], references: [id], onDelete: Cascade)
+  payments Payment[]
+
+  @@map("invoices")
+}
+
+model Milestone {
+  id        String  @id @default(uuid()) @db.Uuid
+  project   Project @relation(fields: [projectId], references: [id])
+  projectId String  @db.Uuid
+
+  title       String
+  description String
+  amount      Float
+  dueDate     DateTime
+  order       Int      @default(1)
+
+  status MilestoneStatus @default(PENDING)
+  source MilestoneSource @default(FINAL) // final snapshot in project
+
+  isPaid   Boolean   @default(false)
+  paidAt   DateTime?
+  payments Payment[]
+  disputes Dispute[] // Disputes related to this milestone
+
+  Proposal                Proposal? @relation(fields: [proposalId], references: [id])
+  proposalId              String?   @db.Uuid
+  deliverables            Json?
+  startDeliverables       Json?     @map("start_deliverables") // When status changes from LOCKED to IN_PROGRESS
+  submitDeliverables      Json?     @map("submit_deliverables") // When status changes from IN_PROGRESS to SUBMITTED
+  approvedAt              DateTime?
+  approvedBy              String?   @db.Uuid
+  submittedAt             DateTime?
+  submissionAttachmentUrl String?   @map("submission_attachment_url")
+  submissionNote          String?   @map("submission_note") @db.Text
+  revisionNumber          Int       @default(0) @map("revision_number") // Track submission iterations
+  submissionHistory       Json?     @map("submission_history") // Array of previous submissions
+}
+
+model Payment {
+  id          String     @id @default(uuid()) @db.Uuid
+  project     Project    @relation(fields: [projectId], references: [id])
+  projectId   String     @db.Uuid
+  milestone   Milestone? @relation(fields: [milestoneId], references: [id])
+  milestoneId String?    @db.Uuid
+
+  // Stripe info
+  stripePaymentIntentId String? @map("stripe_payment_intent_id")
+  stripeTransferId      String? @map("stripe_transfer_id")
+  stripeRefundId        String? @map("stripe_refund_id")
+  stripeChargeId        String? @map("stripe_charge_id") // 👈 NEW: Track actual charge
+
+  amount            Float
+  currency          String        @default("MYR") @db.VarChar(3)
+  platformFeeAmount Float         @default(0) @map("platform_fee_amount") // 👈 NEW
+  providerAmount    Float         @map("provider_amount") // 👈 NEW: Amount after platform fee
+  method            PaymentMethod
+  status            PaymentStatus
+  Invoice           Invoice?      @relation(fields: [invoiceId], references: [id])
+  invoiceId         String?       @db.Uuid
+
+  // Escrow tracking
+  escrowedAt          DateTime? @map("escrowed_at") // 👈 NEW
+  releasedAt          DateTime? @map("released_at") // 👈 NEW
+  releaseScheduledFor DateTime? @map("release_scheduled_for") // 👈 NEW: For auto-release
+
+  // Bank transfer tracking (for provider payout)
+  bankTransferStatus String?   @map("bank_transfer_status") // pending, completed, failed
+  bankTransferDate   DateTime? @map("bank_transfer_date")
+  bankTransferRef    String?   @map("bank_transfer_ref") // Your internal reference
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  Dispute Dispute[]
+
+  Settings Settings[]
+
+  metadata Json? // Store additional payment info
+}
+
+// New model for tracking platform fees
+model PlatformFeeConfig {
+  id          String @id @default(uuid()) @db.Uuid
+  percentage  Float  @default(10.0) // 10% platform fee
+  fixedAmount Float  @default(0.0) // Fixed fee per transaction
+  minAmount   Float  @default(0.0) // Minimum fee
+  maxAmount   Float? // Maximum fee cap
+  currency    String @default("MYR")
+
+  effectiveFrom DateTime  @default(now())
+  effectiveTo   DateTime?
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("platform_fee_configs")
+}
+
+model Message {
+  id              String      @id @default(uuid()) @db.Uuid
+  projectId       String?     @map("project_id") @db.Uuid
+  senderId        String      @map("sender_id") @db.Uuid
+  receiverId      String      @map("receiver_id") @db.Uuid
+  messageType     MessageType @default(text) @map("message_type")
+  subject         String?     @db.VarChar(255)
+  content         String
+  attachments     String[]
+  isRead          Boolean     @default(false) @map("is_read")
+  readAt          DateTime?   @map("read_at") @db.Timestamptz(6)
+  parentMessageId String?     @map("parent_message_id") @db.Uuid
+  messageThreadId String?     @map("message_thread_id") @db.Uuid
+  isSystemMessage Boolean     @default(false) @map("is_system_message")
+  priority        String      @default("normal") @db.VarChar(20)
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  project       Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sender        User      @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver      User      @relation("ReceivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
+  parentMessage Message?  @relation("MessageReplies", fields: [parentMessageId], references: [id])
+  replies       Message[] @relation("MessageReplies")
+
+  @@map("messages")
+}
+
+// NEW: Saved providers/bookmarks
+model SavedProvider {
+  id         String   @id @default(uuid()) @db.Uuid
+  user       User     @relation("UserSavedProviders", fields: [userId], references: [id], onDelete: Cascade)
+  userId     String   @db.Uuid
+  provider   User     @relation("ProviderSavedByUsers", fields: [providerId], references: [id], onDelete: Cascade)
+  providerId String   @db.Uuid
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, providerId])
+  @@map("saved_providers")
+}
+
+// NEW: Saved companies/bookmarks
+model SavedCompany {
+  id        String   @id @default(uuid()) @db.Uuid
+  user      User     @relation("UserSavedCompanies", fields: [userId], references: [id], onDelete: Cascade)
+  userId    String   @db.Uuid
+  company   User     @relation("CompanySavedByProviders", fields: [companyId], references: [id], onDelete: Cascade)
+  companyId String   @db.Uuid
+  createdAt DateTime @default(now())
+
+  @@unique([userId, companyId])
+  @@map("saved_companies")
+}
+
+enum ProposalStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+// ── KYC enums
+enum KycDocType {
+  PROVIDER_ID // Passport/IC
+  COMPANY_REG // SSM/registration doc
+  COMPANY_DIRECTOR_ID // optional director ID
+  OTHER
+}
+
+enum KycDocStatus {
+  uploaded
+  verified
+  rejected
+}
+
+// ── KYC documents per user (admin reviews files; user has overall kycStatus already)
+model KycDocument {
+  id          String       @id @default(uuid()) @db.Uuid
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String       @db.Uuid
+  type        KycDocType
+  fileUrl     String
+  filename    String
+  mimeType    String?
+  status      KycDocStatus @default(uploaded)
+  reviewNotes String?
+  reviewedBy  String?      @db.Uuid // admin userId (optional now)
+  uploadedAt  DateTime     @default(now())
+  reviewedAt  DateTime?
+
+  @@index([userId])
+  @@index([type])
+}
+
+model Dispute {
+  id                  String        @id @default(uuid()) @db.Uuid
+  payment             Payment?      @relation(fields: [paymentId], references: [id])
+  paymentId           String?       @db.Uuid
+  project             Project       @relation(fields: [projectId], references: [id])
+  projectId           String        @db.Uuid
+  raisedBy            User          @relation(fields: [raisedById], references: [id])
+  raisedById          String        @db.Uuid
+  milestoneId         String?       @db.Uuid // Optional milestone reference
+  milestone           Milestone?    @relation(fields: [milestoneId], references: [id])
+  reason              String // e.g. "Missed deadline", "Low quality", "Payment not released"
+  description         String        @db.Text // Detailed description of the dispute
+  contestedAmount     Float? // Amount in dispute (optional)
+  suggestedResolution String?       @db.Text // Suggested resolution from reporter
+  attachments         String[]      @default([]) // URLs to attachment files
+  status              DisputeStatus @default(OPEN)
+  resolution          String?       @db.Text // decision or admin notes (legacy, kept for backward compatibility)
+  resolutionNotes     Json? // Array of resolution notes with timestamps: [{note: string, createdAt: DateTime, adminId: string, adminName: string}]
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+}
+
+model AiDraft {
+  id          String    @id @default(uuid()) @db.Uuid
+  type        DraftType // PROVIDER | CUSTOMER | SERVICE_REQUEST
+  referenceId String    @db.Uuid // ID of ProviderProfile, CustomerProfile, or ServiceRequest
+  summary     String    @db.Text // Short AI-generated brief
+  version     Int       @default(1) // Versioning if regenerated
+  sourceData  Json? // Optional: snapshot of the data used to generate this draft
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([type, referenceId])
+  @@map("ai_drafts")
+}
+
+enum DraftType {
+  PROVIDER
+  CUSTOMER
+  SERVICE_REQUEST
+}
+
+enum DisputeStatus {
+  OPEN // User raised dispute
+  UNDER_REVIEW // Admin/platform investigating
+  RESOLVED // Agreement reached
+  REJECTED // Dispute not accepted
+  CLOSED // Dispute closed
+}
+
+enum Role {
+  CUSTOMER
+  PROVIDER
+  ADMIN
+}
+
+enum KycStatus {
+  active
+  inactive
+  suspended
+  pending_verification
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum ServiceCategory {
+  WEB_DEVELOPMENT        @map("web_development")
+  MOBILE_APP_DEVELOPMENT @map("mobile_app_development")
+  CLOUD_SERVICES         @map("cloud_services")
+  IOT_SOLUTIONS          @map("iot_solutions")
+  DATA_ANALYTICS         @map("data_analytics")
+  CYBERSECURITY          @map("cybersecurity")
+  UI_UX_DESIGN           @map("ui_ux_design")
+  DEVOPS                 @map("devops")
+  AI_ML_SOLUTIONS        @map("ai_ml_solutions")
+  SYSTEM_INTEGRATION     @map("system_integration")
+}
+
+enum RequestStatus {
+  OPEN
+  MATCHED
+  CLOSED
+}
+
+enum ProjectStatus {
+  IN_PROGRESS
+  COMPLETED
+  DISPUTED
+}
+
+enum MilestoneStatus {
+  DRAFT // not shown to counterparty yet (optional use)
+  PENDING // created and visible, not started
+  LOCKED // milestones approved by both parties, ready to start work
+  IN_PROGRESS // provider started working on milestone
+  SUBMITTED // provider submitted for review
+  APPROVED // company approved the milestone work
+  PAID // milestone payment completed
+  REJECTED
+  CANCELLED
+  DISPUTED // milestone is under dispute
+}
+
+enum PaymentMethod {
+  FPX
+  STRIPE
+  EWALLET
+  PENDING
+}
+
+enum PaymentStatus {
+  PENDING // Payment initiated, not yet paid
+  IN_PROGRESS // Payment processing
+  ESCROWED // Funds held in platform Stripe account
+  RELEASED // Ready for payout to provider
+  TRANSFERRED // 👈 NEW: Money sent to provider
+  REFUNDED // Refunded to customer
+  FAILED // Payment failed
+}
+
+enum BankTransferStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum MessageType {
+  text
+  file
+  system
+  proposal
+}
+
+enum MilestoneSource {
+  COMPANY // milestones authored by the company on ServiceRequest
+  PROVIDER // milestones authored by the provider on Proposal
+  FINAL // milestones copied into Project after acceptance
+}
+
+model AdminSettings {
+  id Int @id @default(autoincrement())
+
+  // Platform Settings
+  platformName        String
+  platformDescription String?
+  supportEmail        String
+  contactPhone        String?
+  platformUrl         String?
+
+  // Financial Settings
+  platformCommission    Float @default(0)
+  withdrawalFee         Float @default(0)
+  minimumWithdrawal     Int   @default(0)
+  paymentProcessingTime Int   @default(0)
+
+  // Email (SMTP) Settings
+  smtpHost     String?
+  smtpPort     Int?    @default(587)
+  smtpUsername String?
+  smtpPassword String?
+
+  // Notification Settings
+  emailNotifications Boolean @default(true)
+  smsNotifications   Boolean @default(false)
+  pushNotifications  Boolean @default(true)
+  marketingEmails    Boolean @default(true)
+
+  // Security Settings
+  twoFactorRequired Boolean @default(false)
+  sessionTimeout    Int     @default(30)
+  passwordMinLength Int     @default(8)
+  maxLoginAttempts  Int     @default(5)
+
+  // Feature Flags
+  maintenanceMode   Boolean @default(false)
+  newRegistrations  Boolean @default(true)
+  projectCreation   Boolean @default(true)
+  paymentProcessing Boolean @default(true)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
