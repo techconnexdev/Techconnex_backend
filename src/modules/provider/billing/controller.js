@@ -1,7 +1,13 @@
 // controller.js
 import { generateReceiptPDF } from "../../../utils/receiptPdf.js";
 import { createProviderEarningsPDF } from "../../../utils/providerEarningsReportPdf.js";
-import { uploadFileToR2, generateFileKey, getPublicUrl, generatePresignedDownloadUrl } from "../../../utils/r2.js";
+import {
+  uploadFileToR2,
+  generateFileKey,
+  getPublicUrl,
+  generatePresignedDownloadUrl,
+  fileExistsInR2,
+} from "../../../utils/r2.js";
 import {
   createPayoutMethod,
   deletePayoutMethod,
@@ -19,12 +25,10 @@ export const getProviderBillingController = async (req, res) => {
     const providerId = req.user?.id; // ✅ Extracted from token
 
     if (!providerId) {
-      return res
-        .status(401)
-        .json({
-          success: false,
-          message: "Unauthorized: No provider ID found",
-        });
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized: No provider ID found",
+      });
     }
 
     const data = await getProviderBillingData(providerId);
@@ -75,21 +79,36 @@ export const downloadReceipt = async (req, res, next) => {
     const { paymentId } = req.params;
     const userId = req.user?.id;
 
-    // Get full payment data
-    const payment = await getPaymentDetailsService(paymentId);
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized: Missing user ID",
+      });
+    }
 
-    // Generate PDF buffer
-    const pdfBuffer = await generateReceiptPDF(payment);
+    // Generate R2 key for the receipt (consistent key based on paymentId and userId)
+    // Format: receipts/{userId}/receipt-{paymentId}.pdf
+    // This ensures the same payment always uses the same key
+    const sanitizedPaymentId = paymentId.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const r2Key = `receipts/${userId}/receipt-${sanitizedPaymentId}.pdf`;
 
-    // Generate R2 key for the receipt
-    const fileName = `receipt-${paymentId}.pdf`;
-    const r2Key = generateFileKey("receipts", fileName, userId);
+    // Check if file already exists in R2
+    let downloadUrl;
+    const fileExists = await fileExistsInR2(r2Key);
 
-    // Upload PDF buffer to R2
-    await uploadFileToR2(pdfBuffer, r2Key, "application/pdf");
+    if (!fileExists) {
+      // File doesn't exist, generate and upload it
+      // Get full payment data
+      const payment = await getPaymentDetailsService(paymentId);
+
+      // Generate PDF buffer
+      const pdfBuffer = await generateReceiptPDF(payment);
+
+      // Upload PDF buffer to R2
+      await uploadFileToR2(pdfBuffer, r2Key, "application/pdf");
+    }
 
     // Get public URL or generate presigned URL
-    let downloadUrl;
     try {
       downloadUrl = getPublicUrl(r2Key);
     } catch (error) {
@@ -98,11 +117,13 @@ export const downloadReceipt = async (req, res, next) => {
       downloadUrl = await generatePresignedDownloadUrl(r2Key, 3600); // 1 hour expiry
     }
 
-    // Redirect to R2 URL or return the URL
+    // Return the URL for the frontend to navigate to
     return res.json({
       success: true,
       downloadUrl,
-      message: "Receipt generated and uploaded to R2 storage",
+      message: fileExists
+        ? "Receipt retrieved from storage"
+        : "Receipt generated and uploaded to R2 storage",
     });
   } catch (err) {
     console.error("Error generating receipt:", err);

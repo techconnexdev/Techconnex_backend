@@ -6,12 +6,14 @@ import { createNotification } from "../../notifications/service.js";
 // Create a new review
 export async function createReview(dto) {
   try {
-    // Check if project exists and is completed
+    // Check if project exists and is completed or disputed
     const project = await prisma.project.findFirst({
       where: {
         id: dto.projectId,
         customerId: dto.reviewerId,
-        status: "COMPLETED"
+        status: {
+          in: ["COMPLETED", "DISPUTED"]
+        }
       },
       include: {
         provider: true,
@@ -20,7 +22,7 @@ export async function createReview(dto) {
     });
 
     if (!project) {
-      throw new Error("Project not found or not completed");
+      throw new Error("Project not found or not completed/disputed");
     }
 
     // Check if review already exists for this project
@@ -523,7 +525,9 @@ export async function getCompletedProjectsForReview(customerId) {
     const projects = await prisma.project.findMany({
       where: {
         customerId: customerId,
-        status: "COMPLETED"
+        status: {
+          in: ["COMPLETED", "DISPUTED"]
+        }
       },
       include: {
         provider: {

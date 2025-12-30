@@ -265,6 +265,101 @@ export const paymentModel = {
       readyToTransfer,
     };
   },
+
+  /**
+   * Get revenue statistics (total revenue from TRANSFERRED payments and growth rate)
+   */
+  async getRevenueStats() {
+    try {
+      // Get total revenue: sum of platformFeeAmount for payments with status TRANSFERRED
+      const totalRevenueResult = await prisma.payment.aggregate({
+        where: { status: "TRANSFERRED" },
+        _sum: { platformFeeAmount: true },
+      });
+
+      const totalRevenue = totalRevenueResult._sum.platformFeeAmount || 0;
+
+      // Calculate growth rate (compare last 30 days vs previous 30 days)
+      const now = new Date();
+      const last30Days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      const previous30DaysStart = new Date(
+        now.getTime() - 60 * 24 * 60 * 60 * 1000
+      );
+      const previous30DaysEnd = last30Days;
+
+      // Get revenue for current period (last 30 days)
+      // Use bankTransferDate if available, otherwise use updatedAt (when bankTransferDate is null)
+      const currentPeriodRevenue = await prisma.payment.aggregate({
+        where: {
+          status: "TRANSFERRED",
+          OR: [
+            {
+              bankTransferDate: {
+                gte: last30Days,
+              },
+            },
+            {
+              AND: [
+                { bankTransferDate: null },
+                {
+                  updatedAt: {
+                    gte: last30Days,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        _sum: { platformFeeAmount: true },
+      });
+
+      // Get revenue for previous period (30-60 days ago)
+      const previousPeriodRevenue = await prisma.payment.aggregate({
+        where: {
+          status: "TRANSFERRED",
+          OR: [
+            {
+              bankTransferDate: {
+                gte: previous30DaysStart,
+                lt: previous30DaysEnd,
+              },
+            },
+            {
+              AND: [
+                { bankTransferDate: null },
+                {
+                  updatedAt: {
+                    gte: previous30DaysStart,
+                    lt: previous30DaysEnd,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        _sum: { platformFeeAmount: true },
+      });
+
+      const currentRevenue = currentPeriodRevenue._sum.platformFeeAmount || 0;
+      const previousRevenue = previousPeriodRevenue._sum.platformFeeAmount || 0;
+
+      // Calculate growth rate
+      const growthRate =
+        previousRevenue > 0
+          ? ((currentRevenue - previousRevenue) / previousRevenue) * 100
+          : currentRevenue > 0
+          ? 100
+          : 0;
+
+      return {
+        totalRevenue,
+        growthRate: Math.round(growthRate * 10) / 10, // Round to 1 decimal place
+      };
+    } catch (error) {
+      console.error("Error in getRevenueStats:", error);
+      throw error;
+    }
+  },
 };
 
 export default prisma;

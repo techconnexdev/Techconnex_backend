@@ -57,6 +57,8 @@ export async function searchProviders(filters) {
           name: cert.name,
           issuer: cert.issuer,
           issuedDate: cert.issuedDate,
+          serialNumber: cert.serialNumber,
+          sourceUrl: cert.sourceUrl,
           verified: cert.verified,
         })
       ),
@@ -145,6 +147,8 @@ export async function getProviderDetails(providerId, userId = null) {
           name: cert.name,
           issuer: cert.issuer,
           issuedDate: cert.issuedDate,
+          serialNumber: cert.serialNumber,
+          sourceUrl: cert.sourceUrl,
           verified: cert.verified,
         })
       ),
@@ -399,6 +403,8 @@ export async function getSavedProvidersService(userId, page = 1, limit = 20) {
           name: cert.name,
           issuer: cert.issuer,
           issuedDate: cert.issuedDate,
+          serialNumber: cert.serialNumber,
+          sourceUrl: cert.sourceUrl,
           verified: cert.verified,
         })
       ),

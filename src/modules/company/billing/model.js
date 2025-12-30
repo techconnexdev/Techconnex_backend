@@ -52,8 +52,8 @@ async function getRecentInvoices(userId, limit = 5) {
 async function getRecentTransactions(userId, limit = 5) {
   return prisma.payment.findMany({
     where: {
-      status: { in: ["ESCROWED", "RELEASED", "TRANSFERRED"] },
       project: { customerId: userId },
+      // Include all statuses: ESCROWED, RELEASED, TRANSFERRED, PENDING, REFUNDED, FAILED, etc.
     },
     orderBy: { createdAt: "desc" },
     take: limit,
@@ -68,8 +68,8 @@ async function getRecentTransactions(userId, limit = 5) {
 async function getAllTransactions(userId) {
   return prisma.payment.findMany({
     where: {
-      status: { in: ["ESCROWED", "RELEASED", "TRANSFERRED"] },
       project: { customerId: userId },
+      // Include all statuses: ESCROWED, RELEASED, TRANSFERRED, PENDING, REFUNDED, FAILED, etc.
     },
     orderBy: { createdAt: "desc" },
     include: {

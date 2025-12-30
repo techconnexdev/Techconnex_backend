@@ -1,0 +1,7 @@
+/node_modules
+.gitattributes
+/exports
+R2_SETUP.md
+COMPANY_PROFILE_API.md
+/uploads
+.env

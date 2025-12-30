@@ -1,6 +1,6 @@
 // utils/r2.js
 import { S3Client } from "@aws-sdk/client-s3";
-import { PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // Validate required environment variables
@@ -268,6 +268,34 @@ export function getPublicUrl(key) {
   }
   
   throw new Error("R2 public URL configuration missing. Set R2_PUBLIC_DOMAIN or R2_ACCOUNT_ID.");
+}
+
+/**
+ * Check if a file exists in R2
+ * @param {string} key - R2 object key
+ * @returns {Promise<boolean>} True if file exists, false otherwise
+ */
+export async function fileExistsInR2(key) {
+  if (!r2Client || !R2_BUCKET) {
+    throw new Error("R2 is not configured. Please set R2 environment variables.");
+  }
+
+  try {
+    const command = new HeadObjectCommand({
+      Bucket: R2_BUCKET,
+      Key: key,
+    });
+
+    await r2Client.send(command);
+    return true;
+  } catch (error) {
+    // If error is 404 (NotFound), file doesn't exist
+    if (error.name === "NotFound" || error.$metadata?.httpStatusCode === 404) {
+      return false;
+    }
+    // For other errors, rethrow
+    throw error;
+  }
 }
 
 /**

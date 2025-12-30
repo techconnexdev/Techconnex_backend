@@ -11,6 +11,9 @@ router.use(authenticateToken, requireAdmin);
 // Get payment statistics
 router.get("/stats", paymentController.getPaymentStats);
 
+// Get revenue statistics
+router.get("/revenue-stats", paymentController.getRevenueStats);
+
 // Get payments ready for transfer
 router.get("/ready-to-transfer", paymentController.getReadyToTransferPayments);
 
@@ -19,6 +22,9 @@ router.get("/", paymentController.getAllPayments);
 
 // Get payment by ID
 router.get("/:id", paymentController.getPaymentById);
+
+// Download receipt for a payment
+router.get("/:id/receipt", paymentController.downloadReceipt);
 
 // Confirm bank transfer (with optional file upload to R2)
 router.post("/:id/confirm-transfer", uploadPaymentTransferProof, paymentController.confirmBankTransfer);

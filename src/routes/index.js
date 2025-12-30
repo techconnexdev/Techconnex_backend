@@ -30,11 +30,13 @@ import adminProjectsRouter from "../modules/admin/projects/index.js";
 import adminReportsRouter from "../modules/admin/reports/index.js";
 import adminDashboardRouter from "../modules/admin/dashboard/index.js";
 import adminPaymentsRouter from "../modules/admin/payment/index.js";
+import adminReviewsRouter from "../modules/admin/reviews/index.js";
 import disputesRouter from "../modules/disputes/index.js";
 import paymentRouter from "../modules/payment/index.js";
 import KycRouter from "../modules/kyc/index.js";
 import notificationsRoutes from "../modules/notifications/index.js";
 import uploadsRouter from "../modules/uploads/index.js";
+import { authenticateToken } from "../middlewares/auth.js";
 // import providerCertificateRouter from "../modules/certifications/index.js";
 
 const router = express.Router();
@@ -94,6 +96,7 @@ router.use("/admin/projects", adminProjectsRouter);
 router.use("/admin/reports", adminReportsRouter);
 router.use("/admin/dashboard", adminDashboardRouter);
 router.use("/admin/payments", adminPaymentsRouter);
+router.use("/admin/reviews", adminReviewsRouter);
 router.use("/disputes", disputesRouter);
 router.use("/payments", paymentRouter);
 router.use("/kyc", KycRouter);
@@ -102,6 +105,42 @@ router.use("/uploads", uploadsRouter);
 
 // Mount check-email under /api so frontend using NEXT_PUBLIC_API_BASE_URL that
 // points to http://host:PORT/api will be able to call `${API_BASE}/check-email`
+// Get admin users for customer support (accessible to authenticated users)
+router.get("/admins", authenticateToken, async (req, res) => {
+  try {
+    const { PrismaClient } = await import("@prisma/client");
+    const prisma = new PrismaClient();
+
+    const admins = await prisma.user.findMany({
+      where: {
+        role: { has: "ADMIN" },
+        status: "ACTIVE",
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        customerProfile: {
+          select: {
+            profileImageUrl: true,
+          },
+        },
+      },
+      orderBy: {
+        name: "asc",
+      },
+    });
+
+    res.json({
+      success: true,
+      data: admins,
+    });
+  } catch (error) {
+    console.error("Error fetching admin users:", error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
 // Simple user endpoint for CustomerLayout
 router.get("/users/:id", async (req, res) => {
   try {

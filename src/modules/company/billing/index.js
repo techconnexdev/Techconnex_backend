@@ -1,7 +1,15 @@
 // src/modules/company/billing/routes.js
 import express from "express";
 import { authenticateToken } from "../../../middlewares/auth.js";
-import { getOverview, getTransactions, getInvoices, fetchUpcomingPayments, getPaymentDetails, downloadReceipt, exportAnalyticsReport } from "./controller.js";
+import {
+  getOverview,
+  getTransactions,
+  getInvoices,
+  fetchUpcomingPayments,
+  getPaymentDetails,
+  downloadReceipt,
+  exportAnalyticsReport,
+} from "./controller.js";
 
 const router = express.Router();
 
@@ -18,9 +26,8 @@ router.get("/upcoming", authenticateToken, fetchUpcomingPayments);
 
 router.get("/:paymentId", getPaymentDetails);
 
-router.get("/:paymentId/receipt", downloadReceipt);
+router.get("/:paymentId/receipt", authenticateToken, downloadReceipt);
 
 router.get("/export/report", authenticateToken, exportAnalyticsReport);
-
 
 export default router;

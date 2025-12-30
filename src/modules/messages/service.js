@@ -156,3 +156,11 @@ export const fetchProjectMessages = async (projectId, userId) => {
     project.providerId
   );
 };
+
+// Get total unread message count for a user
+export const getUnreadMessageCount = async (userId) => {
+  if (!userId) {
+    throw new Error("User ID is required");
+  }
+  return messageModel.getUnreadMessageCount(userId);
+};

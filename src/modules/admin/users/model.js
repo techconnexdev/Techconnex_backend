@@ -128,6 +128,11 @@ export const userModel = {
             timeline: true,
             createdAt: true,
             updatedAt: true,
+            milestones: {
+              select: {
+                amount: true,
+              },
+            },
             customer: {
               select: {
                 id: true,
@@ -155,6 +160,11 @@ export const userModel = {
             timeline: true,
             createdAt: true,
             updatedAt: true,
+            milestones: {
+              select: {
+                amount: true,
+              },
+            },
             customer: {
               select: {
                 id: true,

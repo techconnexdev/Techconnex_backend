@@ -117,9 +117,9 @@ async function generateAIExplanation(providerProfile, serviceRequest, matchScore
     });
 
     const prompt = PromptTemplate.fromTemplate(`
-You are an AI assistant helping a freelance provider understand why a specific opportunity is recommended for them.
+You are an AI assistant helping a freelance provider understand why a specific opportunity is recommended for them. Address the provider directly using "You" and "Your" - speak to them personally, not about them in third person.
 
-Provider Profile:
+Your Profile:
 - Skills: {providerSkills}
 - Major/Category: {providerMajor}
 - Years of Experience: {yearsExperience}
@@ -142,19 +142,21 @@ Service Request:
 
 Match Score: {matchScore}/100
 
-Generate a clear, concise explanation in bullet point format. Use simple bullet points (• or -) to list key points.
+Generate a clear, concise explanation in bullet point format. Use simple bullet points (• or -) to list key points. Address the provider directly using "You" and "Your" throughout.
 
 Structure your response as follows:
-• Start with 2-3 positive points explaining why this is a good match (skills alignment, budget fit, timeline compatibility, experience match, etc.)
-• Then list 1-2 potential concerns or considerations (tight deadline, budget mismatch, unclear scope, etc.) if any exist
+• Start with 2-3 positive points explaining why this is a good match for YOU (your skills alignment, budget fit, timeline compatibility, your experience match, etc.)
+• Then list 1-2 potential concerns or considerations for YOU (tight deadline, budget mismatch, unclear scope, etc.) if any exist
 
 Guidelines:
+- Address the provider directly using "You" and "Your" - never use "the provider" or third person
 - Be specific and actionable
 - Use clear, simple language
 - Keep each bullet point to one sentence
 - Focus on the most important factors
 - If there are no significant concerns, only list positives
 - Be honest and balanced
+- Make it feel like a personal recommendation, not a generic analysis
 
 Format: Use bullet points (•) separated by newlines. Return ONLY the bullet points text, no markdown formatting, no code blocks, no quotes, no headers.
 `);

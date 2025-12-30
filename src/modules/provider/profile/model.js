@@ -170,7 +170,7 @@ class ProviderProfileModel {
           availability: true,
           languages: true,
           website: true,
-          // portfolioLinks: true,
+          portfolioLinks: true,
           profileImageUrl: true,
           skills: true,
           yearsExperience: true,
@@ -330,7 +330,9 @@ class ProviderProfileModel {
         portfolioLinks: {
           weight: 3,
           label: "Portfolio Links",
-          value: profile.portfolioLinks,
+          value: Array.isArray(profile.portfolioLinks)
+            ? profile.portfolioLinks.filter((link) => link && link.trim().length > 0)
+            : [],
           minCount: 1,
         },
 

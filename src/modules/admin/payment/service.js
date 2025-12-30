@@ -47,9 +47,26 @@ export const paymentService = {
   async getPaymentStats() {
     try {
       const stats = await paymentModel.getPaymentStats();
-      return stats;
+      // Also get revenue stats (total revenue from TRANSFERRED payments)
+      const revenueStats = await paymentModel.getRevenueStats();
+      return {
+        ...stats,
+        totalRevenue: revenueStats.totalRevenue,
+      };
     } catch (error) {
       throw new Error(`Failed to get payment stats: ${error.message}`);
+    }
+  },
+
+  /**
+   * Get revenue statistics (total revenue and growth rate)
+   */
+  async getRevenueStats() {
+    try {
+      const stats = await paymentModel.getRevenueStats();
+      return stats;
+    } catch (error) {
+      throw new Error(`Failed to get revenue stats: ${error.message}`);
     }
   },
 

@@ -5,6 +5,7 @@ import {
   sendMessage,
   getConversationList,
   fetchProjectMessages,
+  getUnreadMessageCount,
 } from "./service.js";
 
 // Get messages - either all user messages or conversation with specific user
@@ -110,6 +111,25 @@ export const getProjectMessages = async (req, res) => {
     res.status(500).json({
       success: false,
       message: error.message || "Failed to fetch project messages",
+    });
+  }
+};
+
+// Get total unread message count for the current user
+export const getUnreadCount = async (req, res) => {
+  try {
+    const userId = req.user.id || req.user.userId;
+    const count = await getUnreadMessageCount(userId);
+
+    res.json({
+      success: true,
+      count,
+    });
+  } catch (error) {
+    console.error("Get unread count error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to fetch unread count",
     });
   }
 };

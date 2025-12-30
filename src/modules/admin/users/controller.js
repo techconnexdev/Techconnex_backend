@@ -1,4 +1,5 @@
 import { userService } from "./service.js";
+import { generateAdminUsersPDF } from "../../../utils/usersPdfGenerator.js";
 
 export const userController = {
   async getAllUsers(req, res) {
@@ -121,6 +122,37 @@ export const userController = {
       });
     } catch (error) {
       res.status(400).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  },
+
+  async exportUsers(req, res) {
+    try {
+      const { role, status, search } = req.query;
+      const filters = { role, status, search };
+      
+      // Fetch all users with filters
+      const users = await userService.getAllUsers(filters);
+      
+      // Get stats for the PDF
+      const stats = await userService.getUserStats();
+      
+      // Generate PDF
+      const pdfBuffer = await generateAdminUsersPDF(users, filters);
+      
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="admin-users-${Date.now()}.pdf"`
+      );
+      res.setHeader("Content-Length", pdfBuffer.length);
+      
+      res.send(pdfBuffer);
+    } catch (error) {
+      console.error("Error in exportUsers:", error);
+      res.status(500).json({
         success: false,
         error: error.message,
       });

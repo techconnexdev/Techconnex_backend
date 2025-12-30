@@ -6,6 +6,7 @@ import {
   getConversations,
   getMessages,
   getProjectMessages,
+  getUnreadCount,
   markAsRead,
 } from "./controller.js";
 
@@ -38,6 +39,7 @@ router.post("/upload", uploadMessageAttachment, (req, res) => {
 
 router.get("/", getMessages); // GET /api/messages?otherUserId=... or just /api/messages for all
 router.get("/conversations", getConversations); // GET /api/messages/conversations
+router.get("/unread-count", getUnreadCount); // GET /api/messages/unread-count
 router.get("/project/:projectId", getProjectMessages); // GET /api/messages/project/:projectId - for admin access
 router.post("/", createNewMessage); // POST /api/messages
 router.put("/:id/read", markAsRead); // PUT /api/messages/:id/read

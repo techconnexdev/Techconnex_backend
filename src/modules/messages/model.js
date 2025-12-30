@@ -189,6 +189,16 @@ export const getMessageById = async (id) => {
   });
 };
 
+// Get total unread message count for a user
+export const getUnreadMessageCount = async (userId) => {
+  return prisma.message.count({
+    where: {
+      receiverId: userId,
+      isRead: false,
+    },
+  });
+};
+
 // Get messages between two users for a specific project
 export const getMessagesBetweenUsersForProject = async (
   userId1,

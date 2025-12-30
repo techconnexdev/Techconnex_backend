@@ -114,6 +114,32 @@ export const getTopClients = async (providerId) => {
   }));
 };
 
+/**
+ * Get total earnings for a provider (from payments, not milestones)
+ * Uses the same logic as getEarningsOverview: sum of providerAmount for TRANSFERRED or RELEASED payments (excluding REFUNDED)
+ */
+export const getTotalEarnings = async (providerId) => {
+  const payments = await prisma.payment.findMany({
+    where: {
+      project: { providerId },
+      status: { in: ["TRANSFERRED", "RELEASED"] },
+    },
+    select: {
+      providerAmount: true,
+      amount: true,
+    },
+  });
+
+  const toNum = (v) => (v == null ? 0 : Number(v));
+  
+  const totalEarnings = payments.reduce(
+    (s, p) => s + toNum(p.providerAmount || p.amount || 0),
+    0
+  );
+
+  return totalEarnings;
+};
+
 export const findPaymentWithFullDetails = async (paymentId) => {
   return prisma.payment.findUnique({
     where: { id: paymentId },

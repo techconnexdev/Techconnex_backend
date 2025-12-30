@@ -2,12 +2,12 @@
 import express from "express";
 import { authenticateToken } from "../../middlewares/auth.js";
 import jwt from "jsonwebtoken";
-import { 
-  generatePresignedUploadUrl, 
-  generateFileKey, 
-  validateFile, 
+import {
+  generatePresignedUploadUrl,
+  generateFileKey,
+  validateFile,
   getPublicUrl,
-  generatePresignedDownloadUrl 
+  generatePresignedDownloadUrl,
 } from "../../utils/r2.js";
 import { PrismaClient } from "@prisma/client";
 
@@ -18,7 +18,7 @@ const prisma = new PrismaClient();
 const optionalAuthenticate = (req, res, next) => {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
-  
+
   if (!token) {
     // No token - proceed without authentication (for registration)
     req.user = null;
@@ -55,7 +55,7 @@ const optionalAuthenticate = (req, res, next) => {
 /**
  * POST /uploads/presigned-url
  * Generate a presigned URL for uploading a file to R2
- * 
+ *
  * Body:
  * {
  *   fileName: string (required)
@@ -65,7 +65,7 @@ const optionalAuthenticate = (req, res, next) => {
  *   visibility: "public" | "private" (optional, default: "private")
  *   category: "image" | "document" | "video" (optional, auto-detected from mimeType)
  * }
- * 
+ *
  * Response:
  * {
  *   success: true,
@@ -77,13 +77,21 @@ const optionalAuthenticate = (req, res, next) => {
 // Presigned URL endpoint - authentication is optional for registration flows
 router.post("/presigned-url", optionalAuthenticate, async (req, res) => {
   try {
-    const { fileName, mimeType, fileSize, prefix = "uploads", visibility = "private", category } = req.body;
+    const {
+      fileName,
+      mimeType,
+      fileSize,
+      prefix = "uploads",
+      visibility = "private",
+      category,
+    } = req.body;
 
     // Validate required fields
     if (!fileName || !mimeType || fileSize === undefined || fileSize === null) {
       return res.status(400).json({
         success: false,
-        message: "Missing required fields: fileName, mimeType, and fileSize are required",
+        message:
+          "Missing required fields: fileName, mimeType, and fileSize are required",
       });
     }
 
@@ -108,12 +116,14 @@ router.post("/presigned-url", optionalAuthenticate, async (req, res) => {
 
     // Get user ID from token (if authenticated) or use temporary ID for registration
     let userId = req.user?.userId || req.user?.id;
-    
+
     // If no user ID (registration flow), use a temporary identifier
     // This will be replaced with actual user ID after registration
     if (!userId) {
       // Use timestamp-based temporary ID for registration uploads
-      userId = `temp-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      userId = `temp-${Date.now()}-${Math.random()
+        .toString(36)
+        .substring(2, 9)}`;
     }
 
     // Generate unique file key
@@ -153,11 +163,11 @@ router.post("/presigned-url", optionalAuthenticate, async (req, res) => {
  * GET /uploads/download
  * Get a presigned download URL for a private file
  * Checks permissions before generating the URL
- * 
+ *
  * Query params:
  * - key: string (required) - R2 object key
  * - expiresIn?: number (optional, default: 3600) - URL expiration in seconds
- * 
+ *
  * Response:
  * {
  *   success: true,
@@ -188,45 +198,51 @@ router.get("/download", authenticateToken, async (req, res) => {
 
     // Check if user is an admin - admins have access to all files
     const userRoles = req.user?.roles || req.user?.role || [];
-    const isAdmin = Array.isArray(userRoles) 
-      ? userRoles.includes("ADMIN") 
+    const isAdmin = Array.isArray(userRoles)
+      ? userRoles.includes("ADMIN")
       : userRoles === "ADMIN";
 
     // Check permissions: user can download files they own OR files they have access to through shared resources
     // File keys are structured as: prefix/userId/timestamp-random-filename
     // So we check if the key contains the user's ID
-    const ownsFile = key.includes(`/${userId}/`) || key.startsWith(`${userId}/`);
-    
+    const ownsFile =
+      key.includes(`/${userId}/`) || key.startsWith(`${userId}/`);
+
     // Admins can access any file, skip permission checks
     if (!isAdmin && !ownsFile) {
       // Check if user has access through shared resources (proposals, milestones, etc.)
       let hasAccess = false;
-      
-      // Check for proposal attachments: 
+
+      // Check for proposal attachments:
       // 1. Providers can access their own proposal attachments
       // 2. Companies can access provider's proposal attachments for their service requests
       // 3. Both can access proposal attachments for projects they're involved in
       // Normalize key: handle both forward and backslashes, and both "proposals/" and "uploads/proposals/" formats
       const normalizedKey = key.replace(/\\/g, "/");
-      const isProposalKey = normalizedKey.includes("/proposals/") || normalizedKey.startsWith("proposals/");
-      
+      const isProposalKey =
+        normalizedKey.includes("/proposals/") ||
+        normalizedKey.startsWith("proposals/");
+
       if (isProposalKey) {
         // Extract provider ID from key (format: proposals/providerId/timestamp-random-filename or uploads/proposals/providerId/...)
         const keyParts = normalizedKey.split("/");
         // Find the index of "proposals" in the path
-        const proposalsIndex = keyParts.findIndex(part => part === "proposals");
+        const proposalsIndex = keyParts.findIndex(
+          (part) => part === "proposals"
+        );
         if (proposalsIndex >= 0 && keyParts.length > proposalsIndex + 1) {
           const providerIdFromKey = keyParts[proposalsIndex + 1];
-          
+
           // Quick check: If providerId from key matches userId, grant access immediately
           // This handles the common case of providers accessing their own files
           if (String(providerIdFromKey) === String(userId)) {
             hasAccess = true;
           }
-          
+
           // Extract filename from key for additional matching
-          const filename = normalizedKey.split("/").pop() || key.split(/[\\/]/).pop();
-          
+          const filename =
+            normalizedKey.split("/").pop() || key.split(/[\\/]/).pop();
+
           // Find ANY proposal that contains this key in attachmentUrls
           // (The key might be stored as-is or as part of a URL)
           const proposal = await prisma.proposal.findFirst({
@@ -244,7 +260,9 @@ router.get("/download", authenticateToken, async (req, res) => {
                 },
                 {
                   attachmentUrls: {
-                    hasSome: key.split(/[\\/]/).filter(p => p && p !== "uploads" && p !== "proposals"), // Check if any part matches
+                    hasSome: key
+                      .split(/[\\/]/)
+                      .filter((p) => p && p !== "uploads" && p !== "proposals"), // Check if any part matches
                   },
                 },
                 {
@@ -263,11 +281,15 @@ router.get("/download", authenticateToken, async (req, res) => {
                   },
                 },
                 // Also check if any attachmentUrl in the array contains the filename
-                ...(filename ? [{
-                  attachmentUrls: {
-                    hasSome: [filename],
-                  },
-                }] : []),
+                ...(filename
+                  ? [
+                      {
+                        attachmentUrls: {
+                          hasSome: [filename],
+                        },
+                      },
+                    ]
+                  : []),
               ],
             },
             include: {
@@ -290,14 +312,16 @@ router.get("/download", authenticateToken, async (req, res) => {
               },
             },
           });
-          
+
           if (proposal) {
             // Check if user is the provider who created this proposal
             if (String(proposal.providerId) === String(userId)) {
               hasAccess = true;
             }
             // Check if user is the customer for this service request
-            else if (String(proposal.serviceRequest.customerId) === String(userId)) {
+            else if (
+              String(proposal.serviceRequest.customerId) === String(userId)
+            ) {
               hasAccess = true;
             }
             // Check if service request is linked to a project where user is customer or provider
@@ -309,7 +333,11 @@ router.get("/download", authenticateToken, async (req, res) => {
                   providerId: true,
                 },
               });
-              if (project && (String(project.customerId) === String(userId) || String(project.providerId) === String(userId))) {
+              if (
+                project &&
+                (String(project.customerId) === String(userId) ||
+                  String(project.providerId) === String(userId))
+              ) {
                 hasAccess = true;
               }
             }
@@ -320,13 +348,16 @@ router.get("/download", authenticateToken, async (req, res) => {
               );
               if (projectMilestone?.project) {
                 const project = projectMilestone.project;
-                if (String(project.customerId) === String(userId) || String(project.providerId) === String(userId)) {
+                if (
+                  String(project.customerId) === String(userId) ||
+                  String(project.providerId) === String(userId)
+                ) {
                   hasAccess = true;
                 }
               }
             }
           }
-          
+
           // If still no access and providerId from key matches userId, grant access
           // (This is a fallback in case the proposal wasn't found in DB but key format matches)
           if (!hasAccess && String(providerIdFromKey) === String(userId)) {
@@ -334,48 +365,96 @@ router.get("/download", authenticateToken, async (req, res) => {
           }
         }
       }
-      
+
       // Check for milestone attachments: both companies and providers should access milestone attachments for their projects
       if (!hasAccess && key.startsWith("milestones/")) {
         // Extract provider ID from key (format: milestones/providerId/timestamp-random-filename)
         const keyParts = key.split("/");
         if (keyParts.length >= 2) {
           const fileProviderId = keyParts[1];
-          
-          // Find milestones with this submission attachment URL in projects where user is either customer or provider
-          const milestone = await prisma.milestone.findFirst({
+
+          // First, try to find milestone with submissionAttachmentUrl matching the key
+          const milestoneWithDirectUrl = await prisma.milestone.findFirst({
             where: {
-              OR: [
+              AND: [
                 {
-                  project: {
-                    customerId: userId,
-                    providerId: fileProviderId,
-                  },
+                  OR: [
+                    {
+                      project: {
+                        customerId: userId,
+                        providerId: fileProviderId,
+                      },
+                    },
+                    {
+                      project: {
+                        providerId: userId,
+                        customerId: fileProviderId,
+                      },
+                    },
+                  ],
                 },
                 {
-                  project: {
-                    providerId: userId,
-                    customerId: fileProviderId,
-                  },
+                  submissionAttachmentUrl: key,
                 },
               ],
-              submissionAttachmentUrl: key,
             },
           });
-          
-          if (milestone) {
+
+          if (milestoneWithDirectUrl) {
             hasAccess = true;
+          } else {
+            // If not found, check submissionHistory array
+            // Get all milestones for projects where user is customer or provider
+            const milestones = await prisma.milestone.findMany({
+              where: {
+                OR: [
+                  {
+                    project: {
+                      customerId: userId,
+                      providerId: fileProviderId,
+                    },
+                  },
+                  {
+                    project: {
+                      providerId: userId,
+                      customerId: fileProviderId,
+                    },
+                  },
+                ],
+              },
+              select: {
+                id: true,
+                submissionHistory: true,
+              },
+            });
+
+            // Check if any milestone has the key in its submissionHistory
+            for (const m of milestones) {
+              if (m.submissionHistory && Array.isArray(m.submissionHistory)) {
+                const hasKey = m.submissionHistory.some((history) => {
+                  if (typeof history === "object" && history !== null) {
+                    const hist = history;
+                    return hist.submissionAttachmentUrl === key;
+                  }
+                  return false;
+                });
+                if (hasKey) {
+                  hasAccess = true;
+                  break;
+                }
+              }
+            }
           }
         }
       }
-      
+
       // Check for dispute attachments: both companies and providers should access dispute attachments for their projects
       if (!hasAccess && key.startsWith("disputes/")) {
         // Extract user ID from key (format: disputes/userId/timestamp-random-filename)
         const keyParts = key.split("/");
         if (keyParts.length >= 2) {
           const fileUserId = keyParts[1];
-          
+
           // Find disputes with this attachment URL in projects where user is either customer or provider
           const dispute = await prisma.dispute.findFirst({
             where: {
@@ -394,20 +473,20 @@ router.get("/download", authenticateToken, async (req, res) => {
               },
             },
           });
-          
+
           if (dispute) {
             hasAccess = true;
           }
         }
       }
-      
+
       // Check for KYC documents: users can access their own KYC documents, admins can access all (already checked above)
       if (!hasAccess && key.startsWith("kyc/")) {
         // Extract user ID from key (format: kyc/userId/timestamp-random-filename)
         const keyParts = key.split("/");
         if (keyParts.length >= 2) {
           const fileUserId = keyParts[1];
-          
+
           // User can access their own KYC documents
           if (fileUserId === userId) {
             hasAccess = true;
@@ -425,39 +504,82 @@ router.get("/download", authenticateToken, async (req, res) => {
           }
         }
       }
-      
+
       // Check for resume documents: users can access their own resumes, companies and admins can access provider resumes
-      if (!hasAccess && key.startsWith("resumes/")) {
-        // Extract user ID from key (format: resumes/userId/timestamp-random-filename)
-        const keyParts = key.split("/");
-        if (keyParts.length >= 2) {
-          const fileUserId = keyParts[1];
-          
+      // First, check if this key is associated with any resume in the database
+      // This handles cases where the key might be a full URL or in different formats
+      if (!hasAccess) {
+        // Normalize key: extract just the key part if it's a full URL
+        const normalizedKey = key.includes("resumes/")
+          ? key.split("resumes/")[1] || key
+          : key;
+
+        // Check if any resume has a fileUrl that matches or contains this key
+        const resume = await prisma.resume.findFirst({
+          where: {
+            OR: [
+              { fileUrl: { contains: key } },
+              { fileUrl: { contains: normalizedKey } },
+              { fileUrl: key },
+            ],
+          },
+          include: {
+            user: {
+              select: {
+                id: true,
+              },
+            },
+          },
+        });
+
+        if (resume) {
+          const resumeOwnerId = resume.userId;
+
           // User can access their own resume
-          if (fileUserId === userId) {
+          if (String(resumeOwnerId) === String(userId)) {
             hasAccess = true;
           } else {
-            // Check if the file is associated with a resume for this user
-            const resume = await prisma.resume.findFirst({
-              where: {
-                fileUrl: { contains: key },
-                userId: userId, // User owns the resume
-              },
-            });
-            if (resume) {
+            // Check if user is a company (CUSTOMER) or admin - they can access provider resumes
+            const isCustomer = Array.isArray(userRoles)
+              ? userRoles.includes("CUSTOMER")
+              : userRoles === "CUSTOMER";
+
+            // Companies and admins can access any provider's resume
+            // Verify that the resume owner is a provider by checking if they have a provider profile
+            if (isCustomer || isAdmin) {
+              const providerProfile = await prisma.providerProfile.findUnique({
+                where: { userId: resumeOwnerId },
+              });
+              if (providerProfile) {
+                hasAccess = true;
+              }
+            }
+          }
+        } else if (key.includes("resumes/") || key.startsWith("resumes/")) {
+          // Fallback: if no resume found in DB but key format suggests it's a resume,
+          // try to extract user ID from key and check permissions
+          const keyParts = key.replace(/\\/g, "/").split("/");
+          const resumesIndex = keyParts.findIndex((part) => part === "resumes");
+
+          if (resumesIndex >= 0 && keyParts.length > resumesIndex + 1) {
+            const fileUserId = keyParts[resumesIndex + 1];
+
+            // User can access their own resume
+            if (String(fileUserId) === String(userId)) {
               hasAccess = true;
             } else {
               // Check if user is a company (CUSTOMER) or admin - they can access provider resumes
-              const isCustomer = Array.isArray(userRoles) 
-                ? userRoles.includes("CUSTOMER") 
+              const isCustomer = Array.isArray(userRoles)
+                ? userRoles.includes("CUSTOMER")
                 : userRoles === "CUSTOMER";
-              
+
               // Companies and admins can access any provider's resume
-              // Verify that the fileUserId is a provider by checking if they have a provider profile
               if (isCustomer || isAdmin) {
-                const providerProfile = await prisma.providerProfile.findUnique({
-                  where: { userId: fileUserId },
-                });
+                const providerProfile = await prisma.providerProfile.findUnique(
+                  {
+                    where: { userId: fileUserId },
+                  }
+                );
                 if (providerProfile) {
                   hasAccess = true;
                 }
@@ -466,26 +588,35 @@ router.get("/download", authenticateToken, async (req, res) => {
           }
         }
       }
-      
+
       if (!hasAccess) {
         return res.status(403).json({
           success: false,
-          message: "Access denied. You do not have permission to access this file.",
+          message:
+            "Access denied. You do not have permission to access this file.",
         });
       }
     }
 
     // Validate expiresIn
     const expiresInSeconds = parseInt(expiresIn, 10);
-    if (isNaN(expiresInSeconds) || expiresInSeconds < 60 || expiresInSeconds > 86400) {
+    if (
+      isNaN(expiresInSeconds) ||
+      expiresInSeconds < 60 ||
+      expiresInSeconds > 86400
+    ) {
       return res.status(400).json({
         success: false,
-        message: "expiresIn must be between 60 and 86400 seconds (1 minute to 24 hours)",
+        message:
+          "expiresIn must be between 60 and 86400 seconds (1 minute to 24 hours)",
       });
     }
 
     // Generate presigned download URL
-    const downloadUrl = await generatePresignedDownloadUrl(key, expiresInSeconds);
+    const downloadUrl = await generatePresignedDownloadUrl(
+      key,
+      expiresInSeconds
+    );
 
     res.json({
       success: true,
@@ -502,4 +633,3 @@ router.get("/download", authenticateToken, async (req, res) => {
 });
 
 export default router;
-

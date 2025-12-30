@@ -103,6 +103,23 @@ export const disputeModel = {
   },
 
   async createDispute(data) {
+    // Validate milestone status if milestoneId is provided
+    if (data.milestoneId) {
+      const milestone = await prisma.milestone.findUnique({
+        where: { id: data.milestoneId },
+        select: { id: true, status: true, title: true },
+      });
+
+      if (!milestone) {
+        throw new Error("Milestone not found");
+      }
+
+      // Prevent disputes on approved or paid milestones
+      if (milestone.status === "APPROVED" || milestone.status === "PAID") {
+        throw new Error(`Cannot create a dispute for milestone "${milestone.title}" as it has already been approved or paid.`);
+      }
+    }
+
     // Check if a dispute already exists for this project
     const existingDispute = await prisma.dispute.findFirst({
       where: { projectId: data.projectId },
@@ -205,6 +222,23 @@ export const disputeModel = {
   },
 
   async updateDispute(disputeId, data) {
+    // Validate milestone status if milestoneId is being updated
+    if (data.milestoneId !== undefined && data.milestoneId !== null && data.milestoneId !== "") {
+      const milestone = await prisma.milestone.findUnique({
+        where: { id: data.milestoneId },
+        select: { id: true, status: true, title: true },
+      });
+
+      if (!milestone) {
+        throw new Error("Milestone not found");
+      }
+
+      // Prevent disputes on approved or paid milestones
+      if (milestone.status === "APPROVED" || milestone.status === "PAID") {
+        throw new Error(`Cannot update dispute to include milestone "${milestone.title}" as it has already been approved or paid.`);
+      }
+    }
+
     // Merge existing attachments with new ones if provided
     let attachments = data.attachments;
     if (attachments && Array.isArray(attachments)) {

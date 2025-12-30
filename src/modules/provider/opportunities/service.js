@@ -113,15 +113,13 @@ export async function getOpportunities(dto) {
 
     const proposedServiceRequestIds = new Set(existingProposals.map(p => p.serviceRequestId));
 
-    // Add hasProposed flag and filter out already proposed requests
+    // Add hasProposed flag to all opportunities (don't filter out already proposed)
     // projectsPosted already comes from database in customerProfile
-    const opportunities = serviceRequests
-      .filter(sr => !proposedServiceRequestIds.has(sr.id))
-      .map(sr => ({
-        ...sr,
-        hasProposed: false,
-        // projectsPosted is already in customer.customerProfile from the query above (from database)
-      }));
+    const opportunities = serviceRequests.map(sr => ({
+      ...sr,
+      hasProposed: proposedServiceRequestIds.has(sr.id),
+      // projectsPosted is already in customer.customerProfile from the query above (from database)
+    }));
 
     const totalPages = Math.ceil(total / dto.limit);
 
@@ -130,7 +128,7 @@ export async function getOpportunities(dto) {
       pagination: {
         page: dto.page,
         limit: dto.limit,
-        total: opportunities.length,
+        total: total, // Use total count from database, not filtered opportunities length
         totalPages,
       },
     };

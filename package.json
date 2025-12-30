@@ -21,7 +21,7 @@
     "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
+    "dotenv": "^17.0.0",
     "express": "^5.1.0",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
@@ -36,7 +36,7 @@
     "socket.io": "^4.8.1",
     "stripe": "^19.2.0",
     "xlsx": "^0.18.5",
-    "zod": "^3.25.0"
+    "zod": "^4.1.11"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",

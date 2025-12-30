@@ -1,5 +1,6 @@
 // src/modules/provider/projects/service.js
 import { prisma } from "./model.js";
+import { getTotalEarnings } from "../billing/model.js";
 import {
   GetProviderProjectsDto,
   UpdateProjectStatusDto,
@@ -336,7 +337,10 @@ export async function updateProjectStatus(dto) {
         },
       });
     } catch (notificationError) {
-      console.error("Failed to notify customer of project status update:", notificationError);
+      console.error(
+        "Failed to notify customer of project status update:",
+        notificationError
+      );
     }
 
     return updatedProject;
@@ -440,7 +444,11 @@ export async function updateMilestoneStatus(dto) {
           userId: milestone.project.customerId,
           title: "Milestone Submitted",
           type: "milestone",
-          content: `Milestone "${milestone.title}" has been submitted for review${dto.submissionAttachmentUrl ? " with attachment" : ""}`,
+          content: `Milestone "${
+            milestone.title
+          }" has been submitted for review${
+            dto.submissionAttachmentUrl ? " with attachment" : ""
+          }`,
           metadata: {
             milestoneId: dto.milestoneId,
             milestoneTitle: milestone.title,
@@ -451,7 +459,10 @@ export async function updateMilestoneStatus(dto) {
           },
         });
       } catch (notificationError) {
-        console.error("Failed to notify customer of milestone submission:", notificationError);
+        console.error(
+          "Failed to notify customer of milestone submission:",
+          notificationError
+        );
       }
     } else if (dto.status === "IN_PROGRESS" && milestone.status === "LOCKED") {
       // Notify customer when provider starts working on a milestone
@@ -470,7 +481,10 @@ export async function updateMilestoneStatus(dto) {
           },
         });
       } catch (notificationError) {
-        console.error("Failed to notify customer of milestone work start:", notificationError);
+        console.error(
+          "Failed to notify customer of milestone work start:",
+          notificationError
+        );
       }
     }
 
@@ -516,7 +530,7 @@ export async function getProviderProjectStats(providerId) {
       activeProjects,
       completedProjects,
       disputedProjects,
-      totalEarnings,
+      totalEarningsResult,
       averageRating,
     ] = await Promise.all([
       prisma.project.count({
@@ -537,13 +551,8 @@ export async function getProviderProjectStats(providerId) {
           status: "DISPUTED",
         },
       }),
-      prisma.milestone.aggregate({
-        where: {
-          project: { providerId },
-          status: "PAID",
-        },
-        _sum: { amount: true },
-      }),
+      // Use billing module's getTotalEarnings to get accurate total from payments
+      getTotalEarnings(providerId),
       prisma.review.aggregate({
         where: {
           recipientId: providerId, // Reviews received by the provider
@@ -557,7 +566,7 @@ export async function getProviderProjectStats(providerId) {
       activeProjects,
       completedProjects,
       disputedProjects,
-      totalEarnings: totalEarnings._sum.amount || 0,
+      totalEarnings: totalEarningsResult || 0,
       averageRating: averageRating._avg.rating || 0,
     };
   } catch (error) {

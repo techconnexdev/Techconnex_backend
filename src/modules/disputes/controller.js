@@ -54,6 +54,29 @@ export const disputeController = {
         });
       }
 
+      // Validate milestone status if milestoneId is provided
+      if (milestoneId && milestoneId !== "null" && milestoneId !== "undefined" && milestoneId.trim() !== "") {
+        const milestone = await prisma.milestone.findUnique({
+          where: { id: milestoneId.trim() },
+          select: { id: true, status: true, title: true },
+        });
+
+        if (!milestone) {
+          return res.status(400).json({
+            success: false,
+            error: "Milestone not found",
+          });
+        }
+
+        // Prevent disputes on approved or paid milestones
+        if (milestone.status === "APPROVED" || milestone.status === "PAID") {
+          return res.status(400).json({
+            success: false,
+            error: `Cannot create a dispute for milestone "${milestone.title}" as it has already been approved or paid.`,
+          });
+        }
+      }
+
       // Get user name for attachment metadata
       const user = await prisma.user.findUnique({
         where: { id: userId },
@@ -162,6 +185,29 @@ export const disputeController = {
           success: false,
           error: "Cannot update a closed or resolved dispute",
         });
+      }
+
+      // Validate milestone status if milestoneId is being updated
+      if (req.body.milestoneId && req.body.milestoneId !== "null" && req.body.milestoneId !== "undefined" && req.body.milestoneId.trim() !== "") {
+        const milestone = await prisma.milestone.findUnique({
+          where: { id: req.body.milestoneId.trim() },
+          select: { id: true, status: true, title: true },
+        });
+
+        if (!milestone) {
+          return res.status(400).json({
+            success: false,
+            error: "Milestone not found",
+          });
+        }
+
+        // Prevent disputes on approved or paid milestones
+        if (milestone.status === "APPROVED" || milestone.status === "PAID") {
+          return res.status(400).json({
+            success: false,
+            error: `Cannot update dispute to include milestone "${milestone.title}" as it has already been approved or paid.`,
+          });
+        }
       }
 
       const updateData = {};

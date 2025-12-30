@@ -4,7 +4,7 @@ const prisma = new PrismaClient();
 
 export const dashboardModel = {
   async getDashboardStats() {
-    // Get all stats in parallel
+    // Get all stats in parallel (excluding revenue which comes from payment service)
     const [
       totalUsers,
       activeUsers,
@@ -17,7 +17,6 @@ export const dashboardModel = {
       openDisputes,
       underReviewDisputes,
       pendingVerifications,
-      totalRevenue,
     ] = await Promise.all([
       // Users
       prisma.user.count(),
@@ -46,38 +45,7 @@ export const dashboardModel = {
           },
         },
       }),
-      
-      // Total revenue (sum of all released payments)
-      prisma.payment.aggregate({
-        where: { status: "RELEASED" },
-        _sum: { amount: true },
-      }),
     ]);
-
-    // Calculate growth rate (compare last 30 days vs previous 30 days)
-    const now = new Date();
-    const last30Days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const previous30Days = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
-
-    const [currentPeriodUsers, previousPeriodUsers] = await Promise.all([
-      prisma.user.count({
-        where: {
-          createdAt: { gte: last30Days },
-        },
-      }),
-      prisma.user.count({
-        where: {
-          createdAt: {
-            gte: previous30Days,
-            lt: last30Days,
-          },
-        },
-      }),
-    ]);
-
-    const platformGrowth = previousPeriodUsers > 0
-      ? ((currentPeriodUsers - previousPeriodUsers) / previousPeriodUsers) * 100
-      : currentPeriodUsers > 0 ? 100 : 0;
 
     return {
       totalUsers,
@@ -91,8 +59,7 @@ export const dashboardModel = {
       openDisputes,
       underReviewDisputes,
       pendingVerifications,
-      totalRevenue: totalRevenue._sum.amount || 0,
-      platformGrowth: Math.round(platformGrowth * 10) / 10, // Round to 1 decimal
+      // Revenue and growth rate will be added by the service from payment service
     };
   },
 

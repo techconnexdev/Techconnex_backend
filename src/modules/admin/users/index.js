@@ -13,6 +13,9 @@ router.get("/", userController.getAllUsers);
 // Get user stats
 router.get("/stats", userController.getUserStats);
 
+// Export users as PDF
+router.get("/export", userController.exportUsers);
+
 // Create new user
 router.post("/", userController.createUser);
 

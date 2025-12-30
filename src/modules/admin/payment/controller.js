@@ -1,4 +1,12 @@
 import { paymentService } from "./service.js";
+import { generateReceiptPDF } from "../../../utils/receiptPdf.js";
+import {
+  uploadFileToR2,
+  generateFileKey,
+  getPublicUrl,
+  generatePresignedDownloadUrl,
+  fileExistsInR2,
+} from "../../../utils/r2.js";
 
 export const paymentController = {
   /**
@@ -61,6 +69,26 @@ export const paymentController = {
       });
     } catch (error) {
       console.error("Get payment stats error:", error);
+      res.status(500).json({
+        success: false,
+        message: error.message,
+      });
+    }
+  },
+
+  /**
+   * GET /admin/payments/revenue-stats
+   * Get revenue statistics (total revenue and growth rate)
+   */
+  async getRevenueStats(req, res) {
+    try {
+      const stats = await paymentService.getRevenueStats();
+      res.json({
+        success: true,
+        data: stats,
+      });
+    } catch (error) {
+      console.error("Get revenue stats error:", error);
       res.status(500).json({
         success: false,
         message: error.message,
@@ -140,6 +168,65 @@ export const paymentController = {
       });
     } catch (error) {
       console.error("Confirm bank transfer error:", error);
+      res.status(500).json({
+        success: false,
+        message: error.message,
+      });
+    }
+  },
+
+  /**
+   * GET /admin/payments/:id/receipt
+   * Download receipt for a payment
+   */
+  async downloadReceipt(req, res) {
+    try {
+      const { id } = req.params;
+
+      // Get payment details
+      const payment = await paymentService.getPaymentById(id);
+
+      if (!payment) {
+        return res.status(404).json({
+          success: false,
+          message: "Payment not found",
+        });
+      }
+
+      // Generate R2 key for the receipt (consistent key based on paymentId)
+      // Format: receipts/admin/receipt-{paymentId}.pdf
+      const sanitizedPaymentId = id.replace(/[^a-zA-Z0-9]/g, "-");
+      const r2Key = `receipts/admin/receipt-${sanitizedPaymentId}.pdf`;
+
+      // Check if receipt already exists in R2
+      const exists = await fileExistsInR2(r2Key);
+
+      if (exists) {
+        // Generate presigned download URL (valid for 1 hour)
+        const downloadUrl = await generatePresignedDownloadUrl(r2Key, 3600);
+        return res.json({
+          success: true,
+          downloadUrl,
+          message: "Receipt retrieved from storage",
+        });
+      }
+
+      // Generate PDF receipt
+      const pdfBuffer = await generateReceiptPDF(payment);
+
+      // Upload to R2
+      await uploadFileToR2(pdfBuffer, r2Key, "application/pdf");
+
+      // Generate presigned download URL (valid for 1 hour)
+      const downloadUrl = await generatePresignedDownloadUrl(r2Key, 3600);
+
+      res.json({
+        success: true,
+        downloadUrl,
+        message: "Receipt generated and uploaded to R2 storage",
+      });
+    } catch (error) {
+      console.error("Error generating receipt:", error);
       res.status(500).json({
         success: false,
         message: error.message,

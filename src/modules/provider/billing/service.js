@@ -117,7 +117,7 @@ export async function getEarningsOverview(userId, timeFilter = "this-month") {
     where: { projectId: { in: projectIds } },
     include: {
       project: { select: { id: true, title: true, customerId: true } },
-      milestone: { select: { id: true, title: true } },
+      milestone: { select: { id: true, title: true, status: true } },
     },
     orderBy: { createdAt: "desc" },
     take: 200,
@@ -136,9 +136,15 @@ export async function getEarningsOverview(userId, timeFilter = "this-month") {
     )
     .reduce((s, p) => s + toNum(p.providerAmount || p.amount || 0), 0);
 
-  // availableBalance: released but not yet transferred -> statuses RELEASED (ready for payout)
+  // availableBalance: payments that are ESCROWED with milestone status APPROVED
+  // These are payments that have been transferred and should be received from TechConnect platform
   const availableBalance = payments
-    .filter((p) => p.status === "RELEASED")
+    .filter((p) => {
+      return (
+        p.status === "ESCROWED" &&
+        p.milestone?.status === "APPROVED"
+      );
+    })
     .reduce((s, p) => s + toNum(p.providerAmount || p.amount || 0), 0);
 
   // pendingPayments: payments that are ESCROWED or PENDING (not yet released)

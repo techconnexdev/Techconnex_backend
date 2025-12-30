@@ -3,6 +3,7 @@ import { prisma } from "./model.js";
 import { CreateProjectDto, GetProjectsDto } from "./dto.js";
 import { createServiceRequestAiDraft } from "./service-request-ai-draft.js";
 import { createNotification } from "../../notifications/service.js";
+import { getTotalSpent } from "../billing/model.js";
 
 export async function createProject(dto) {
   try {
@@ -567,13 +568,8 @@ export async function getCompanyProjectStats(customerId) {
           status: "DISPUTED",
         },
       }),
-      prisma.milestone.aggregate({
-        where: {
-          project: { customerId },
-          status: "PAID",
-        },
-        _sum: { amount: true },
-      }),
+      // Use billing module's getTotalSpent to get accurate total from payments
+      getTotalSpent(customerId),
       Promise.all([
         prisma.review.count({
           where: {
