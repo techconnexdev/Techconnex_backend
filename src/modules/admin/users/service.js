@@ -1,5 +1,7 @@
 import bcrypt from "bcryptjs";
 import { userModel } from "./model.js";
+import { createProviderAiDraft } from "../../auth/provider/provider-ai-draft.js";
+import { createCompanyAiDraft } from "../../auth/company/company-ai-draft.js";
 
 export const userService = {
   async getAllUsers(filters = {}) {
@@ -74,6 +76,33 @@ export const userService = {
         ...userData,
         password: hashedPassword,
       });
+
+      // Generate AI draft for provider or customer profiles
+      try {
+        // Check if role is PROVIDER (handle both string and array)
+        const isProvider = 
+          userData.role === "PROVIDER" || 
+          (Array.isArray(userData.role) && userData.role.includes("PROVIDER")) ||
+          (Array.isArray(user.role) && user.role.includes("PROVIDER"));
+        
+        // Check if role is CUSTOMER (handle both string and array)
+        const isCustomer = 
+          userData.role === "CUSTOMER" || 
+          (Array.isArray(userData.role) && userData.role.includes("CUSTOMER")) ||
+          (Array.isArray(user.role) && user.role.includes("CUSTOMER"));
+
+        if (isProvider && user.providerProfile?.id) {
+          // Fire-and-forget, but await to ensure saved before returning
+          await createProviderAiDraft(user.providerProfile.id);
+        } else if (isCustomer && user.customerProfile?.id) {
+          // Fire-and-forget, but await to ensure saved before returning
+          await createCompanyAiDraft(user.customerProfile.id);
+        }
+      } catch (aiDraftError) {
+        // Log and continue — user creation should not fail because of AI draft
+        console.error("Failed to create AI draft for admin-created user:", aiDraftError);
+      }
+
       return user;
     } catch (error) {
       throw new Error(`Failed to create user: ${error.message}`);

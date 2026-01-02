@@ -103,7 +103,7 @@ router.use("/kyc", KycRouter);
 router.use("/notifications", notificationsRoutes);
 router.use("/uploads", uploadsRouter);
 
-// Mount check-email under /api so frontend using NEXT_PUBLIC_API_BASE_URL that
+// Mount check-email under /api so frontend using NEXT_PUBLIC_API_URL that
 // points to http://host:PORT/api will be able to call `${API_BASE}/check-email`
 // Get admin users for customer support (accessible to authenticated users)
 router.get("/admins", authenticateToken, async (req, res) => {
