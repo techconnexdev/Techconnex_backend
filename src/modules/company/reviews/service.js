@@ -137,7 +137,13 @@ export async function getReviews(dto) {
           customerProfile: {
             select: {
               companySize: true,
-              industry: true
+              industry: true,
+              profileImageUrl: true
+            }
+          },
+          providerProfile: {
+            select: {
+              profileImageUrl: true
             }
           }
         }
@@ -151,7 +157,13 @@ export async function getReviews(dto) {
             select: {
               rating: true,
               totalReviews: true,
-              location: true
+              location: true,
+              profileImageUrl: true
+            }
+          },
+          customerProfile: {
+            select: {
+              profileImageUrl: true
             }
           }
         }
