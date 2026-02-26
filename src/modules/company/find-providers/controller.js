@@ -324,9 +324,9 @@ export async function getProviderFullDetails(req, res) {
 }
 
 // GET /api/providers/recommended - Get recommended providers for company
+// Query: serviceRequestId (optional) - when provided, return top 5 providers for that opportunity only
 export async function getRecommendedProvidersController(req, res) {
   try {
-    // Get user ID from JWT payload (could be userId or id)
     const customerId = req.user?.userId || req.user?.id;
 
     if (!customerId) {
@@ -336,7 +336,9 @@ export async function getRecommendedProvidersController(req, res) {
       });
     }
 
-    const result = await getRecommendedProviders(customerId);
+    const serviceRequestId = req.query?.serviceRequestId?.trim() || undefined;
+
+    const result = await getRecommendedProviders(customerId, serviceRequestId);
 
     res.json({
       success: true,

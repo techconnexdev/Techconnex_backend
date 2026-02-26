@@ -44,6 +44,7 @@ export class SendProposalDto {
       description: (m.description || "").toString(),
       amount: Number(m.amount),
       dueDate: m.dueDate ? new Date(m.dueDate).toISOString() : null,
+      daysFromStart: m.daysFromStart != null ? Number(m.daysFromStart) : null,
     })) : [];
   }
 
@@ -80,28 +81,37 @@ export class SendProposalDto {
       throw new Error("Total milestone amount must approximately match bid amount");
     }
     let prev = 0;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0); // Set to start of day for comparison
-    
+    const deliveryTimeDays = Number(this.deliveryTime) || 0;
+
     for (const m of this.milestones) {
       if (!m.title || !m.amount) throw new Error("Each milestone must have title and amount");
       if (m.sequence <= prev) throw new Error("Milestones must have increasing sequence numbers starting at 1");
-      
-      // Validate due date is not in the past
-      if (m.dueDate) {
-        const dueDate = new Date(m.dueDate);
-        if (isNaN(dueDate.getTime())) {
-          throw new Error(`Milestone "${m.title}": Due date must be a valid date`);
-        }
-        const dueDateOnly = new Date(dueDate);
-        dueDateOnly.setHours(0, 0, 0, 0); // Set to start of day for comparison
-        
-        if (dueDateOnly < today) {
-          throw new Error(`Milestone "${m.title}": Due date cannot be in the past. Please select today or a future date.`);
-        }
+
+      // Milestones use "days after project start" (daysFromStart) — required and validated against delivery timeline
+      const days = m.daysFromStart != null ? Number(m.daysFromStart) : null;
+      if (days == null || !Number.isInteger(days) || days < 1) {
+        throw new Error(`Milestone "${m.title}": Days from project start is required and must be a positive integer (e.g. 7 for "7 days after start").`);
       }
-      
+      if (deliveryTimeDays > 0 && days > deliveryTimeDays) {
+        throw new Error(
+          `Milestone "${m.title}": Days from start (${days}) cannot exceed your delivery timeline (${deliveryTimeDays} days). ` +
+          "Keep milestone days within your proposed delivery timeline."
+        );
+      }
+
       prev = m.sequence;
+    }
+
+    // Total of milestone durations must equal delivery timeline (same idea as bid amount vs milestones total)
+    const sorted = [...this.milestones].sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
+    const lastDaysFromStart = sorted.length > 0 && sorted[sorted.length - 1].daysFromStart != null
+      ? Number(sorted[sorted.length - 1].daysFromStart)
+      : 0;
+    if (deliveryTimeDays > 0 && lastDaysFromStart !== deliveryTimeDays) {
+      throw new Error(
+        `Total of milestone durations must equal your delivery timeline (${deliveryTimeDays} days). ` +
+        `Currently last milestone ends at day ${lastDaysFromStart}.`
+      );
     }
   }
   // ...

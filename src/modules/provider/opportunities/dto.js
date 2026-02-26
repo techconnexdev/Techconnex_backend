@@ -5,8 +5,9 @@ export class GetOpportunitiesDto {
     this.page = parseInt(data.page) || 1;
     this.limit = parseInt(data.limit) || 10;
     this.category = data.category;
-    this.skills = data.skills ? data.skills.split(',').map(s => s.trim()) : [];
+    this.skills = data.skills ? (Array.isArray(data.skills) ? data.skills : data.skills.split(',').map(s => s.trim())) : [];
     this.search = data.search;
+    this.sort = data.sort === 'best-match' ? 'best-match' : 'newest';
   }
 
   validate() {

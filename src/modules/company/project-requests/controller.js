@@ -8,6 +8,8 @@ import {
 } from "./service.js";
 import { GetProjectRequestsDto, AcceptProposalDto, RejectProposalDto } from "./dto.js";
 import { generateCustomerRequestsPDF } from "../../../utils/projectsPdfGenerator.js";
+import { generateBidExplanation } from "./bid-explanation.js";
+import { calculateProposalScore } from "./bid-ranking.js";
 
 // GET /api/company/project-requests - Get all project requests (proposals) for a company
 export async function getProjectRequestsController(req, res) {
@@ -29,6 +31,39 @@ export async function getProjectRequestsController(req, res) {
     res.status(400).json({
       success: false,
       message: error.message,
+    });
+  }
+}
+
+// GET /api/company/project-requests/:id/bid-explanation - Return stored AI explanation or generate for legacy proposals
+export async function getBidExplanationController(req, res) {
+  try {
+    const proposalId = req.params.id;
+    const customerId = req.user.userId;
+    if (!proposalId) {
+      return res.status(400).json({ success: false, message: "Proposal ID is required" });
+    }
+    const proposal = await getProjectRequestById(proposalId, customerId);
+    if (!proposal.serviceRequest) {
+      return res.status(400).json({ success: false, message: "Proposal or project not found" });
+    }
+    // Use stored explanation when available (saves tokens)
+    const stored = proposal.aiFitExplanation && proposal.aiFitExplanation.trim();
+    if (stored) {
+      return res.json({ success: true, explanation: stored });
+    }
+    const withScore = {
+      ...proposal,
+      matchScore: proposal.matchScore ?? calculateProposalScore(proposal, proposal.serviceRequest),
+    };
+    const explanation = await generateBidExplanation(withScore);
+    const defaultSummary = "Review this proposal’s bid amount, timeline, and milestones. Check the provider’s profile and cover letter to assess how well they match your project.";
+    res.json({ success: true, explanation: (explanation && explanation.trim()) || defaultSummary });
+  } catch (error) {
+    console.error("Error in getBidExplanationController:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to generate explanation",
     });
   }
 }

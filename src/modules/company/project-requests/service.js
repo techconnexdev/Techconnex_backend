@@ -5,6 +5,7 @@ import {
   AcceptProposalDto,
   RejectProposalDto,
 } from "./dto.js";
+import { rankProposals } from "./bid-ranking.js";
 
 export async function getProjectRequests(dto) {
   try {
@@ -39,6 +40,8 @@ export async function getProjectRequests(dto) {
     }
 
     const skip = (dto.page - 1) * dto.limit;
+    // When fetching for a single project, get more proposals so we can rank and show best 5
+    const takeLimit = dto.serviceRequestId ? Math.min(100, Math.max(dto.limit, 50)) : dto.limit;
 
     const [proposals, total] = await Promise.all([
       prisma.proposal.findMany({
@@ -60,7 +63,7 @@ export async function getProjectRequests(dto) {
                   yearsExperience: true,
                   successRate: true,
                   responseTime: true,
-                  profileImageUrl: true, // 🆕 Profile image
+                  profileImageUrl: true,
                 },
               },
             },
@@ -73,7 +76,7 @@ export async function getProjectRequests(dto) {
               category: true,
               budgetMin: true,
               budgetMax: true,
-              skills: true, // Use skills, not aiStackSuggest
+              skills: true,
               timeline: true,
               priority: true,
               status: true,
@@ -97,25 +100,32 @@ export async function getProjectRequests(dto) {
               title: true,
               description: true,
               dueDate: true,
+              daysFromStart: true,
               amount: true,
               status: true,
             },
           },
         },
         orderBy: { createdAt: "desc" },
-        skip,
-        take: dto.limit,
+        skip: dto.serviceRequestId ? 0 : skip,
+        take: dto.serviceRequestId ? takeLimit : dto.limit,
       }),
       prisma.proposal.count({ where }),
     ]);
 
-    const totalPages = Math.ceil(total / dto.limit);
+    let resultProposals = proposals;
+    if (dto.serviceRequestId && proposals.length > 0) {
+      const serviceRequest = proposals[0].serviceRequest || null;
+      resultProposals = rankProposals(proposals, serviceRequest);
+    }
+
+    const totalPages = dto.serviceRequestId ? 1 : Math.ceil(total / dto.limit);
 
     return {
-      proposals, // includes proposal.status now
+      proposals: resultProposals,
       pagination: {
-        page: dto.page,
-        limit: dto.limit,
+        page: dto.serviceRequestId ? 1 : dto.page,
+        limit: dto.serviceRequestId ? resultProposals.length : dto.limit,
         total,
         totalPages,
       },
@@ -268,42 +278,46 @@ export async function acceptProposal(dto) {
       );
     }
 
-    // Choose milestones based on useProviderMilestones flag
+    // Helper: placeholder due date until project starts (then set from startedAt + daysFromStart)
+    const placeholderDueDate = (daysFromStart) => {
+      const days = daysFromStart != null ? Number(daysFromStart) : 0;
+      return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+    };
+
+    // Choose milestones based on useProviderMilestones flag (use daysFromStart; dueDate is set at lock)
     let chosenMilestones = [];
     let chosenMilestoneSource = "COMPANY";
 
     if (dto.useProviderMilestones && proposal.milestones.length > 0) {
-      // Use provider milestones
       chosenMilestones = proposal.milestones.map((m) => ({
         title: m.title,
         description: m.description,
         amount: m.amount,
-        dueDate: m.dueDate,
+        daysFromStart: m.daysFromStart ?? (m.dueDate ? Math.ceil((new Date(m.dueDate) - Date.now()) / (24 * 60 * 60 * 1000)) : null),
         order: m.order,
         status: "PENDING",
         source: "FINAL",
       }));
       chosenMilestoneSource = "PROVIDER";
     } else if (proposal.serviceRequest.milestones.length > 0) {
-      // Use company milestones
       chosenMilestones = proposal.serviceRequest.milestones.map((m) => ({
         title: m.title,
         description: m.description,
         amount: m.amount,
-        dueDate: m.dueDate,
+        daysFromStart: m.daysFromStart ?? (m.dueDate ? Math.ceil((new Date(m.dueDate) - Date.now()) / (24 * 60 * 60 * 1000)) : null),
         order: m.order,
         status: "PENDING",
         source: "FINAL",
       }));
       chosenMilestoneSource = "COMPANY";
     } else {
-      // Create default milestone
+      const deliveryDays = proposal.deliveryTime ? Number(proposal.deliveryTime) : 30;
       chosenMilestones = [
         {
           title: "Full project",
           description: "Complete project delivery",
           amount: proposal.bidAmount,
-          dueDate: null,
+          daysFromStart: deliveryDays,
           order: 1,
           status: "PENDING",
           source: "FINAL",
@@ -331,14 +345,19 @@ export async function acceptProposal(dto) {
           status: "IN_PROGRESS",
           customerId: proposal.serviceRequest.customerId,
           providerId: proposal.providerId,
-          // Initialize milestone approval flags
           milestonesLocked: false,
           companyApproved: false,
           providerApproved: false,
           milestones: {
             create: chosenMilestones.map((m) => ({
-              ...m,
-              status: "DRAFT", // Start as DRAFT, not PENDING
+              title: m.title,
+              description: m.description ?? "",
+              amount: m.amount,
+              dueDate: placeholderDueDate(m.daysFromStart),
+              daysFromStart: m.daysFromStart ?? null,
+              order: m.order,
+              status: "DRAFT",
+              source: "FINAL",
             })),
           },
         },
@@ -419,13 +438,19 @@ export async function acceptProposal(dto) {
         data: { status: "REJECTED" },
       });
 
-      // Notify provider
+      // Notify provider (with projectId + linkPath for grouping and click-through)
       await tx.notification.create({
         data: {
           userId: proposal.providerId,
           title: "Proposal Accepted",
           type: "proposal",
           content: `Your proposal for "${proposal.serviceRequest.title}" has been accepted!`,
+          metadata: {
+            projectId: project.id,
+            projectTitle: project.title,
+            eventType: "proposal_accepted",
+            linkPath: `/provider/projects/${project.id}`,
+          },
         },
       });
 
@@ -467,15 +492,22 @@ export async function rejectProposal(dto) {
       data: { status: "REJECTED" },
     });
 
-    // Notify provider
+    // Notify provider (linkPath to opportunities; no projectId for rejected)
+    const projectId = proposal.serviceRequest.projectId || null;
     await prisma.notification.create({
       data: {
         userId: proposal.providerId,
-        title: "proposal Update",
+        title: "Proposal Update",
         type: "proposal",
         content: `Your proposal for "${
           proposal.serviceRequest.title
         }" has been rejected.${dto.reason ? ` Reason: ${dto.reason}` : ""}`,
+        metadata: {
+          ...(projectId && { projectId }),
+          projectTitle: proposal.serviceRequest.title,
+          eventType: "proposal_rejected",
+          linkPath: projectId ? `/provider/projects/${projectId}` : "/provider/opportunities",
+        },
       },
     });
 

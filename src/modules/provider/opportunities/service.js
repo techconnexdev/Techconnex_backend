@@ -1,6 +1,7 @@
 // src/modules/provider/opportunities/service.js
 import { prisma } from "./model.js";
 import { GetOpportunitiesDto } from "./dto.js";
+import { calculateMatchScore } from "../../../shared/recommendation-match-score.js";
 
 // Get AiDrafts for service requests (optionally filtered by referenceIds array)
 async function getAiDraftsForServiceRequests(referenceIds = null) {
@@ -113,13 +114,29 @@ export async function getOpportunities(dto) {
 
     const proposedServiceRequestIds = new Set(existingProposals.map(p => p.serviceRequestId));
 
-    // Add hasProposed flag to all opportunities (don't filter out already proposed)
-    // projectsPosted already comes from database in customerProfile
-    const opportunities = serviceRequests.map(sr => ({
-      ...sr,
-      hasProposed: proposedServiceRequestIds.has(sr.id),
-      // projectsPosted is already in customer.customerProfile from the query above (from database)
-    }));
+    // Fetch provider profile for match scoring (same algorithm as AI Recommended)
+    let providerProfile = null;
+    if (dto.providerId && (dto.sort === 'best-match' || !dto.sort)) {
+      const profile = await prisma.providerProfile.findUnique({
+        where: { userId: dto.providerId },
+      });
+      providerProfile = profile;
+    }
+
+    // Add hasProposed and matchScore; sort by best-match when requested
+    let opportunities = serviceRequests.map(sr => {
+      const score = providerProfile ? calculateMatchScore(providerProfile, sr) : null;
+      return {
+        ...sr,
+        hasProposed: proposedServiceRequestIds.has(sr.id),
+        matchScore: score,
+      };
+    });
+
+    if (dto.sort === 'best-match' && providerProfile) {
+      opportunities = opportunities.sort((a, b) => (b.matchScore ?? 0) - (a.matchScore ?? 0));
+    }
+    // else: already ordered by createdAt desc from findMany
 
     const totalPages = Math.ceil(total / dto.limit);
 

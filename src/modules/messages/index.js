@@ -8,6 +8,9 @@ import {
   getProjectMessages,
   getUnreadCount,
   markAsRead,
+  reportConversationHandler,
+  checkReportStatusHandler,
+  checkCanChatHandler,
 } from "./controller.js";
 
 import { authenticateToken } from "../../middlewares/auth.js";
@@ -44,4 +47,7 @@ router.get("/project/:projectId", getProjectMessages); // GET /api/messages/proj
 router.post("/", createNewMessage); // POST /api/messages
 router.put("/:id/read", markAsRead); // PUT /api/messages/:id/read
 router.delete("/:id", deleteMessage); // DELETE /api/messages/:id
+router.get("/check-report", checkReportStatusHandler); // GET /api/messages/check-report?reportedUserId=...
+router.get("/can-chat", checkCanChatHandler); // GET /api/messages/can-chat?otherUserId=...
+router.post("/report", reportConversationHandler); // POST /api/messages/report
 export default router;

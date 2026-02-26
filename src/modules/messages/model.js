@@ -199,6 +199,18 @@ export const getUnreadMessageCount = async (userId) => {
   });
 };
 
+// Create a conversation report
+export const createConversationReport = async (data) => {
+  return prisma.conversationReport.create({
+    data: {
+      reporterId: data.reporterId,
+      reportedUserId: data.reportedUserId,
+      reason: data.reason,
+      additionalDetails: data.additionalDetails || null,
+    },
+  });
+};
+
 // Get messages between two users for a specific project
 export const getMessagesBetweenUsersForProject = async (
   userId1,

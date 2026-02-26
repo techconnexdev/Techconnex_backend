@@ -40,6 +40,7 @@ export async function getProjectMilestones(projectId, customerId) {
         description: m.description,
         amount: m.amount,
         dueDate: m.dueDate,
+        daysFromStart: m.daysFromStart,
         order: m.order,
         status: m.status,
         startDeliverables: m.startDeliverables,
@@ -91,19 +92,24 @@ export async function updateProjectMilestones(projectId, customerId, milestones)
         where: { projectId: projectId }
       })
 
-      // Create new milestones
+      // Create new milestones (daysFromStart; dueDate placeholder until project starts)
       if (dto.milestones.length > 0) {
+        const now = Date.now()
         await tx.milestone.createMany({
-          data: dto.milestones.map(m => ({
-            projectId: projectId,
-            title: m.title,
-            description: m.description || "",
-            amount: m.amount,
-            dueDate: new Date(m.dueDate),
-            order: m.sequence || 1,
-            status: "DRAFT",
-            source: "FINAL"
-          }))
+          data: dto.milestones.map(m => {
+            const days = m.daysFromStart != null ? Number(m.daysFromStart) : 0
+            return {
+              projectId: projectId,
+              title: m.title,
+              description: m.description || "",
+              amount: m.amount,
+              dueDate: new Date(now + days * 24 * 60 * 60 * 1000),
+              daysFromStart: m.daysFromStart != null ? Number(m.daysFromStart) : null,
+              order: m.sequence || 1,
+              status: "DRAFT",
+              source: "FINAL"
+            }
+          })
         })
       }
 
@@ -145,6 +151,7 @@ export async function updateProjectMilestones(projectId, customerId, milestones)
             projectId: projectId,
             projectTitle: projectWithProvider.title,
             eventType: "milestones_updated",
+            linkPath: `/provider/projects/${projectId}`,
           },
         });
       }
@@ -159,6 +166,7 @@ export async function updateProjectMilestones(projectId, customerId, milestones)
         description: m.description,
         amount: m.amount,
         dueDate: m.dueDate,
+        daysFromStart: m.daysFromStart,
         order: m.order,
         status: m.status
       })),
@@ -205,22 +213,31 @@ export async function approveMilestones(projectId, customerId) {
 
     // Check if both parties have approved
     if (updatedProject.companyApproved && updatedProject.providerApproved) {
-      // Lock milestones and mark them as approved
+      const startedAt = new Date()
+      // Lock milestones, set project start date, and compute due dates from daysFromStart
       const finalProject = await prisma.$transaction(async (tx) => {
-        // Update project to lock milestones
         const lockedProject = await tx.project.update({
           where: { id: projectId },
-      data: {
+          data: {
             milestonesLocked: true,
-            milestonesApprovedAt: new Date()
+            milestonesApprovedAt: startedAt,
+            startedAt: startedAt
           }
         })
 
-        // Update all milestones to LOCKED status (ready to start work)
-        await tx.milestone.updateMany({
+        // Set each milestone to LOCKED and set dueDate = startedAt + daysFromStart
+        const milestones = await tx.milestone.findMany({
           where: { projectId: projectId },
-          data: { status: "LOCKED" }
+          orderBy: { order: "asc" }
         })
+        for (const m of milestones) {
+          const days = m.daysFromStart != null ? m.daysFromStart : 0
+          const dueDate = new Date(startedAt.getTime() + days * 24 * 60 * 60 * 1000)
+          await tx.milestone.update({
+            where: { id: m.id },
+            data: { status: "LOCKED", dueDate }
+          })
+        }
 
         return lockedProject
       })
@@ -245,6 +262,7 @@ export async function approveMilestones(projectId, customerId) {
               projectId: projectId,
               projectTitle: projectWithProvider.title,
               eventType: "milestones_locked",
+              linkPath: `/provider/projects/${projectId}`,
             },
           });
         }
@@ -252,15 +270,20 @@ export async function approveMilestones(projectId, customerId) {
         console.error("Failed to notify provider of milestone lock:", notificationError);
       }
 
+      const lockedMilestones = await prisma.milestone.findMany({
+        where: { projectId: projectId },
+        orderBy: { order: "asc" }
+      })
       return {
         approved: true,
         locked: true,
-        milestones: updatedProject.milestones.map(m => ({
+        milestones: lockedMilestones.map(m => ({
           id: m.id,
           title: m.title,
           description: m.description,
           amount: m.amount,
           dueDate: m.dueDate,
+          daysFromStart: m.daysFromStart,
           order: m.order,
           status: "LOCKED"
         })),
@@ -291,6 +314,7 @@ export async function approveMilestones(projectId, customerId) {
             projectId: projectId,
             projectTitle: projectWithProvider.title,
             eventType: "milestones_approved_by_company",
+            linkPath: `/provider/projects/${projectId}`,
           },
         });
       }

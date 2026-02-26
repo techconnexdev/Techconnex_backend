@@ -42,6 +42,7 @@ export async function getProjectMilestones(projectId, providerId) {
         description: m.description,
         amount: m.amount,
         dueDate: m.dueDate,
+        daysFromStart: m.daysFromStart,
         order: m.order,
         status: m.status,
         startDeliverables: m.startDeliverables,
@@ -97,19 +98,23 @@ export async function updateProjectMilestones(
         where: { projectId: projectId },
       });
 
-      // Create new milestones
       if (dto.milestones.length > 0) {
+        const now = Date.now();
         await tx.milestone.createMany({
-          data: dto.milestones.map((m) => ({
-            projectId: projectId,
-            title: m.title,
-            description: m.description || "",
-            amount: m.amount,
-            dueDate: new Date(m.dueDate),
-            order: m.sequence || 1,
-            status: "DRAFT",
-            source: "FINAL",
-          })),
+          data: dto.milestones.map((m) => {
+            const days = m.daysFromStart != null ? Number(m.daysFromStart) : 0;
+            return {
+              projectId: projectId,
+              title: m.title,
+              description: m.description || "",
+              amount: m.amount,
+              dueDate: new Date(now + days * 24 * 60 * 60 * 1000),
+              daysFromStart: m.daysFromStart != null ? Number(m.daysFromStart) : null,
+              order: m.sequence || 1,
+              status: "DRAFT",
+              source: "FINAL",
+            };
+          }),
         });
       }
 
@@ -151,6 +156,7 @@ export async function updateProjectMilestones(
             projectId: projectId,
             projectTitle: projectWithCustomer.title,
             eventType: "milestones_updated",
+            linkPath: `/customer/projects/${projectId}`,
           },
         });
       }
@@ -165,6 +171,7 @@ export async function updateProjectMilestones(
         description: m.description,
         amount: m.amount,
         dueDate: m.dueDate,
+        daysFromStart: m.daysFromStart,
         order: m.order,
         status: m.status,
       })),
@@ -284,6 +291,7 @@ export async function approveMilestones(projectId, providerId) {
               projectId: projectId,
               projectTitle: projectWithCustomer.title,
               eventType: "milestones_locked",
+              linkPath: `/customer/projects/${projectId}`,
             },
           });
         }
@@ -330,6 +338,7 @@ export async function approveMilestones(projectId, providerId) {
             projectId: projectId,
             projectTitle: projectWithCustomer.title,
             eventType: "milestones_approved_by_provider",
+            linkPath: `/customer/projects/${projectId}`,
           },
         });
       }

@@ -6,20 +6,25 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// Platform fee configuration
-const PLATFORM_FEE_PERCENTAGE = 0.1; // 10%
+// Platform fee configuration (10% total, split 5% customer + 5% provider)
+const CUSTOMER_FEE_PERCENTAGE = 0.05; // 5% charged to customer (added to milestone amount)
+const PROVIDER_FEE_PERCENTAGE = 0.05; // 5% deducted from provider (from milestone amount)
 
 /**
- * Calculate platform fee and provider amount
+ * Calculate fees with split: customer pays 5% more, provider receives 5% less.
+ * For milestone 1000: customer pays 1050, provider receives 950, platform gets 100.
  */
-function calculateFees(amount) {
-  const platformFee = Math.round(amount * PLATFORM_FEE_PERCENTAGE * 100) / 100;
-  const providerAmount = Math.round((amount - platformFee) * 100) / 100;
+function calculateFees(milestoneAmount) {
+  const customerFee = Math.round(milestoneAmount * CUSTOMER_FEE_PERCENTAGE * 100) / 100;
+  const providerFee = Math.round(milestoneAmount * PROVIDER_FEE_PERCENTAGE * 100) / 100;
+  const platformFee = Math.round((customerFee + providerFee) * 100) / 100;
+  const totalAmount = Math.round((milestoneAmount + customerFee) * 100) / 100; // What customer pays
+  const providerAmount = Math.round((milestoneAmount - providerFee) * 100) / 100; // What provider receives
 
   return {
     platformFee,
     providerAmount,
-    totalAmount: amount,
+    totalAmount,
   };
 }
 

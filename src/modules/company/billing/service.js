@@ -3,7 +3,7 @@ import {
   getTotalSpent,
   getPendingPayments,
   getThisMonthSpent,
-  getAverageTransaction,
+  getAverageTransactionByYear,
   getRecentInvoices,
   getRecentTransactions,
   getAllTransactions,
@@ -22,21 +22,26 @@ function getMonthRange() {
 async function getBillingOverview(userId) {
   const { firstDay, lastDay } = getMonthRange();
 
-  const [totalSpent, pending, monthly, avg, invoices, transactions] =
+  const [totalSpent, pending, monthly, avgByYear, invoices, transactions] =
     await Promise.all([
       getTotalSpent(userId),
       getPendingPayments(userId),
       getThisMonthSpent(userId, firstDay, lastDay),
-      getAverageTransaction(userId),
+      getAverageTransactionByYear(userId),
       getRecentInvoices(userId),
       getRecentTransactions(userId),
     ]);
+
+  const currentYear = new Date().getFullYear();
+  const currentYearRow = avgByYear.find((r) => r.year === currentYear);
+  const averageTransaction = currentYearRow ? currentYearRow.average : (avgByYear[0]?.average ?? 0);
 
   return {
     totalSpent: totalSpent._sum.amount || 0,
     pendingPayments: pending._sum.amount || 0,
     thisMonthSpent: monthly._sum.amount || 0,
-    averageTransaction: avg._avg.amount || 0,
+    averageTransaction,
+    averageTransactionByYear: avgByYear,
     recentInvoices: invoices,
     recentTransactions: transactions,
   };

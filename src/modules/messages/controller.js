@@ -6,6 +6,9 @@ import {
   getConversationList,
   fetchProjectMessages,
   getUnreadMessageCount,
+  reportConversation,
+  hasUserReportedConversation,
+  hasReportBetweenUsers,
 } from "./service.js";
 
 // Get messages - either all user messages or conversation with specific user
@@ -111,6 +114,85 @@ export const getProjectMessages = async (req, res) => {
     res.status(500).json({
       success: false,
       message: error.message || "Failed to fetch project messages",
+    });
+  }
+};
+
+// Check if current user can chat with another user (no report between them)
+export const checkCanChatHandler = async (req, res) => {
+  try {
+    const userId = req.user.id || req.user.userId;
+    const { otherUserId } = req.query;
+
+    if (!otherUserId) {
+      return res.status(400).json({
+        success: false,
+        message: "otherUserId is required",
+      });
+    }
+
+    const reportExists = await hasReportBetweenUsers(userId, otherUserId);
+
+    res.json({
+      success: true,
+      data: { canChat: !reportExists },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to check",
+    });
+  }
+};
+
+// Check if current user has already reported this conversation
+export const checkReportStatusHandler = async (req, res) => {
+  try {
+    const userId = req.user.id || req.user.userId;
+    const { reportedUserId } = req.query;
+
+    if (!reportedUserId) {
+      return res.status(400).json({
+        success: false,
+        message: "reportedUserId is required",
+      });
+    }
+
+    const reported = await hasUserReportedConversation(userId, reportedUserId);
+
+    res.json({
+      success: true,
+      data: { reported },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to check report status",
+    });
+  }
+};
+
+// Report a conversation
+export const reportConversationHandler = async (req, res) => {
+  try {
+    const userId = req.user.id || req.user.userId;
+    const { reportedUserId, reason, additionalDetails } = req.body;
+
+    const report = await reportConversation(userId, {
+      reportedUserId,
+      reason,
+      additionalDetails,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "Report submitted successfully. Our team will review it.",
+      data: { id: report.id },
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message || "Failed to submit report",
     });
   }
 };

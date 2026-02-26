@@ -3,133 +3,15 @@ import { prisma } from "./model.js";
 import { ChatOpenAI } from "@langchain/openai";
 import { PromptTemplate } from "@langchain/core/prompts";
 import { RunnableSequence } from "@langchain/core/runnables";
+import { calculateMatchScore } from "../../../shared/recommendation-match-score.js";
 
-// In-memory cache for recommendations (customerId -> { recommendations, cachedAt })
+// In-memory cache for recommendations (customerId or "customerId:serviceRequestId" -> { recommendations, cachedAt })
 const recommendationsCache = new Map();
 
 const CACHE_DURATION_MS = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
 
-/**
- * Calculate match score between provider and service request
- * Based on skills overlap, category match, budget compatibility, and timeline fit
- */
-function calculateMatchScore(providerProfile, serviceRequest) {
-  let score = 0;
-  const maxScore = 100;
-
-  // Skills overlap (40% weight)
-  const providerSkills = (providerProfile.skills || []).map((s) =>
-    s.toLowerCase()
-  );
-  const requestSkills = (serviceRequest.skills || []).map((s) =>
-    s.toLowerCase()
-  );
-
-  if (requestSkills.length > 0) {
-    const matchingSkills = requestSkills.filter((skill) =>
-      providerSkills.some((ps) => ps.includes(skill) || skill.includes(ps))
-    );
-    const skillsScore = (matchingSkills.length / requestSkills.length) * 40;
-    score += skillsScore;
-  } else {
-    score += 20; // Neutral score if no skills specified
-  }
-
-  // Category match (20% weight)
-  if (providerProfile.major && serviceRequest.category) {
-    const providerMajor = providerProfile.major.toLowerCase();
-    const requestCategory = serviceRequest.category.toLowerCase();
-
-    if (
-      providerMajor === requestCategory ||
-      providerMajor.includes(requestCategory) ||
-      requestCategory.includes(providerMajor)
-    ) {
-      score += 20;
-    } else {
-      const categoryKeywords = {
-        web: ["web", "frontend", "backend", "fullstack"],
-        mobile: ["mobile", "app", "ios", "android"],
-        cloud: ["cloud", "aws", "azure", "devops"],
-        ai: ["ai", "ml", "machine learning", "artificial intelligence"],
-        data: ["data", "analytics", "database"],
-        design: ["design", "ui", "ux"],
-      };
-
-      let foundMatch = false;
-      for (const [key, keywords] of Object.entries(categoryKeywords)) {
-        if (
-          keywords.some(
-            (k) => providerMajor.includes(k) || requestCategory.includes(k)
-          )
-        ) {
-          score += 10; // Partial match
-          foundMatch = true;
-          break;
-        }
-      }
-
-      if (!foundMatch) {
-        score += 3; // Minimal match
-      }
-    }
-  } else {
-    score += 10; // Neutral score
-  }
-
-  // Budget compatibility (20% weight)
-  const requestBudgetMin = serviceRequest.budgetMin || 0;
-  const requestBudgetMax = serviceRequest.budgetMax || Infinity;
-  const providerMinBudget = providerProfile.minimumProjectBudget || 0;
-  const providerMaxBudget = providerProfile.maximumProjectBudget || Infinity;
-  const providerHourlyRate = providerProfile.hourlyRate || 0;
-
-  // Check if budgets overlap
-  if (
-    providerMinBudget <= requestBudgetMax &&
-    providerMaxBudget >= requestBudgetMin
-  ) {
-    score += 20; // Budgets are compatible
-  } else if (providerHourlyRate > 0) {
-    // Estimate based on hourly rate (rough estimate: 40 hours for small, 200 for large)
-    const estimatedMin = providerHourlyRate * 40;
-    const estimatedMax = providerHourlyRate * 200;
-    if (estimatedMin <= requestBudgetMax && estimatedMax >= requestBudgetMin) {
-      score += 15; // Estimated budget compatibility
-    } else {
-      score += 5; // Budget mismatch
-    }
-  } else {
-    score += 10; // No budget info, neutral
-  }
-
-  // Timeline & availability fit (20% weight)
-  if (serviceRequest.timeline && providerProfile.availability) {
-    const timeline = serviceRequest.timeline.toLowerCase();
-    const availability = providerProfile.availability.toLowerCase();
-
-    // Check for urgency indicators
-    const urgentKeywords = ["urgent", "asap", "immediate", "quick", "fast"];
-    const isUrgent = urgentKeywords.some((keyword) =>
-      timeline.includes(keyword)
-    );
-
-    if (
-      isUrgent &&
-      (availability.includes("available") || availability.includes("immediate"))
-    ) {
-      score += 20; // Perfect match for urgent projects
-    } else if (!isUrgent && availability.includes("available")) {
-      score += 15; // Good match
-    } else {
-      score += 8; // Partial match
-    }
-  } else {
-    score += 10; // Neutral score
-  }
-
-  return Math.min(Math.round(score), maxScore);
-}
+/** Max characters for request description in AI prompt to avoid long context. */
+const MAX_REQUEST_DESCRIPTION_LENGTH = 500;
 
 /**
  * Get cached recommendations if still valid
@@ -234,6 +116,12 @@ Format: Use bullet points (•) separated by newlines. Return ONLY the bullet po
 
     const chain = RunnableSequence.from([prompt, model]);
 
+    const rawDescription = serviceRequest.description || "No description";
+    const requestDescription =
+      rawDescription.length > MAX_REQUEST_DESCRIPTION_LENGTH
+        ? rawDescription.slice(0, MAX_REQUEST_DESCRIPTION_LENGTH) + "..."
+        : rawDescription;
+
     const result = await chain.invoke({
       providerName: providerProfile.user?.name || "Provider",
       providerSkills:
@@ -257,7 +145,7 @@ Format: Use bullet points (•) separated by newlines. Return ONLY the bullet po
       responseTime: providerProfile.responseTime?.toString() || "24",
       isVerified: isVerified ? "Yes" : "No",
       requestTitle: serviceRequest.title,
-      requestDescription: serviceRequest.description || "No description",
+      requestDescription,
       requestCategory: serviceRequest.category || "Not specified",
       requestSkills:
         (serviceRequest.skills || []).join(", ") || "Not specified",
@@ -302,12 +190,16 @@ Format: Use bullet points (•) separated by newlines. Return ONLY the bullet po
 }
 
 /**
- * Get recommended providers for a company based on their ServiceRequests
+ * Get recommended providers for a company based on their ServiceRequests.
+ * @param {string} customerId - Company/customer user id
+ * @param {string} [serviceRequestId] - Optional. If provided, return top 5 providers for this request only (same algorithm).
  */
-export async function getRecommendedProviders(customerId) {
+export async function getRecommendedProviders(customerId, serviceRequestId) {
+  const cacheKey = serviceRequestId ? `${customerId}:${serviceRequestId}` : customerId;
+
   try {
-    // Check cache first
-    const cached = getCachedRecommendations(customerId);
+    // Check cache first (2-hour TTL for both global and per-service-request, same as AI find providers)
+    const cached = getCachedRecommendations(cacheKey);
     if (cached) {
       return {
         recommendations: cached.recommendations,
@@ -317,12 +209,17 @@ export async function getRecommendedProviders(customerId) {
       };
     }
 
-    // Get company's open ServiceRequests
+    // Get company's open ServiceRequests (one or all)
+    const where = {
+      customerId: customerId,
+      status: "OPEN",
+    };
+    if (serviceRequestId) {
+      where.id = serviceRequestId;
+    }
+
     const openServiceRequests = await prisma.serviceRequest.findMany({
-      where: {
-        customerId: customerId,
-        status: "OPEN",
-      },
+      where,
       include: {
         _count: {
           select: {
@@ -370,7 +267,6 @@ export async function getRecommendedProviders(customerId) {
       },
     });
 
-    // Check which providers have already submitted proposals for these ServiceRequests
     const serviceRequestIds = openServiceRequests.map((sr) => sr.id);
     const existingProposals = await prisma.proposal.findMany({
       where: {
@@ -384,7 +280,6 @@ export async function getRecommendedProviders(customerId) {
       },
     });
 
-    // Create a map of providerId -> Set of ServiceRequestIds they've already proposed to
     const providerProposedMap = new Map();
     existingProposals.forEach((proposal) => {
       if (!providerProposedMap.has(proposal.providerId)) {
@@ -395,7 +290,6 @@ export async function getRecommendedProviders(customerId) {
         .add(proposal.serviceRequestId);
     });
 
-    // Calculate match scores for each provider against each ServiceRequest
     const providerScores = [];
 
     for (const provider of allProviders) {
@@ -404,12 +298,10 @@ export async function getRecommendedProviders(customerId) {
       const proposedServiceRequestIds =
         providerProposedMap.get(provider.id) || new Set();
 
-      // Find the best matching ServiceRequest for this provider
       let bestMatch = null;
       let bestScore = 0;
 
       for (const serviceRequest of openServiceRequests) {
-        // Skip if provider already proposed
         if (proposedServiceRequestIds.has(serviceRequest.id)) continue;
 
         const score = calculateMatchScore(
@@ -432,7 +324,6 @@ export async function getRecommendedProviders(customerId) {
       }
     }
 
-    // Sort by match score and take top 5
     const topMatches = providerScores
       .sort((a, b) => b.matchScore - a.matchScore)
       .slice(0, 5);
@@ -490,10 +381,9 @@ export async function getRecommendedProviders(customerId) {
       )
     );
 
-    // Cache the recommendations
     const cachedAt = Date.now();
     const nextRefreshAt = cachedAt + CACHE_DURATION_MS;
-    setCachedRecommendations(customerId, recommendations);
+    setCachedRecommendations(cacheKey, recommendations);
 
     return {
       recommendations,

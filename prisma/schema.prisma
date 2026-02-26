@@ -65,6 +65,12 @@ model User {
   ReviewReply ReviewReply[]
 
   settings Settings?
+
+  // AI Support Chat: one conversation per user
+  supportConversation SupportConversation?
+  // Conversation reports (as reporter or reported)
+  conversationReportsByReporter ConversationReport[] @relation("ConversationReportsByReporter")
+  conversationReportsAgainst     ConversationReport[] @relation("ConversationReportsAgainst")
 }
 
 model Notification {
@@ -374,14 +380,15 @@ model ServiceRequestMilestone {
   serviceRequest   ServiceRequest @relation(fields: [serviceRequestId], references: [id])
   serviceRequestId String         @db.Uuid
 
-  title       String
-  description String?
-  amount      Float
-  dueDate     DateTime?
-  order       Int       @default(1)
+  title         String
+  description   String?
+  amount        Float
+  dueDate       DateTime?  // Legacy; prefer daysFromStart. Computed when project starts.
+  daysFromStart Int?       @map("days_from_start") // Days after project start (project-relative)
 
-  status MilestoneStatus @default(PENDING)
-  source MilestoneSource @default(COMPANY) // fixed for SR milestones
+  order       Int       @default(1)
+  status      MilestoneStatus @default(PENDING)
+  source      MilestoneSource  @default(COMPANY)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -405,6 +412,7 @@ model Proposal {
   coverLetter    String         @db.Text
   attachmentUrls String[]       @default([]) // e.g., PDF proposal or portfolio
   attachmentUrl  String? // e.g., PDF proposal or portfolio
+  aiFitExplanation String?      @db.Text // AI-generated summary for customer (why this bid fits)
 
   // Provider-proposed milestones for this proposal
   milestones ProposalMilestone[]
@@ -420,14 +428,15 @@ model ProposalMilestone {
   proposal   Proposal @relation(fields: [proposalId], references: [id])
   proposalId String   @db.Uuid
 
-  title       String
-  description String?
-  amount      Float
-  dueDate     DateTime?
-  order       Int       @default(1)
+  title         String
+  description   String?
+  amount        Float
+  dueDate       DateTime?  // Legacy; prefer daysFromStart
+  daysFromStart Int?       @map("days_from_start") // Days after project start (validated against delivery timeline)
 
-  status MilestoneStatus @default(PENDING)
-  source MilestoneSource @default(PROVIDER) // fixed for proposal milestones
+  order       Int       @default(1)
+  status      MilestoneStatus @default(PENDING)
+  source      MilestoneSource  @default(PROVIDER)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -472,6 +481,7 @@ model Project {
   companyApproved      Boolean   @default(false) @map("company_approved")
   providerApproved     Boolean   @default(false) @map("provider_approved")
   milestonesApprovedAt DateTime? @map("milestones_approved_at")
+  startedAt            DateTime? @map("started_at") // Project start; milestone due dates = startedAt + daysFromStart
 
   // Final milestones (snapshot after acceptance)
   milestones Milestone[]
@@ -528,14 +538,15 @@ model Milestone {
   project   Project @relation(fields: [projectId], references: [id])
   projectId String  @db.Uuid
 
-  title       String
-  description String
-  amount      Float
-  dueDate     DateTime
-  order       Int      @default(1)
+  title         String
+  description   String
+  amount        Float
+  dueDate       DateTime   // Computed from project.startedAt + daysFromStart when locked
+  daysFromStart Int?       @map("days_from_start") // Days after project start (source of truth before lock)
 
-  status MilestoneStatus @default(PENDING)
-  source MilestoneSource @default(FINAL) // final snapshot in project
+  order       Int      @default(1)
+  status      MilestoneStatus @default(PENDING)
+  source      MilestoneSource @default(FINAL) // final snapshot in project
 
   isPaid   Boolean   @default(false)
   paidAt   DateTime?
@@ -646,6 +657,30 @@ model Message {
   @@map("messages")
 }
 
+// Conversation reports - users can flag suspicious/inappropriate conversations
+enum ConversationReportReason {
+  OUTSOURCE_OFF_PLATFORM
+  SPAM_IRRELEVANT
+  HARASSMENT_INAPPROPRIATE
+  FRAUD_IMPERSONATION
+}
+
+model ConversationReport {
+  id             String                 @id @default(uuid()) @db.Uuid
+  reporterId     String                 @map("reporter_id") @db.Uuid
+  reportedUserId String                 @map("reported_user_id") @db.Uuid
+  reason         ConversationReportReason
+  additionalDetails String?             @map("additional_details") @db.Text
+  status         String                 @default("PENDING") @db.VarChar(20)
+  createdAt      DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  reporter User @relation("ConversationReportsByReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  reported User @relation("ConversationReportsAgainst", fields: [reportedUserId], references: [id], onDelete: Cascade)
+
+  @@map("conversation_reports")
+}
+
 // NEW: Saved providers/bookmarks
 model SavedProvider {
   id         String   @id @default(uuid()) @db.Uuid
@@ -670,6 +705,89 @@ model SavedCompany {
 
   @@unique([userId, companyId])
   @@map("saved_companies")
+}
+
+// ── AI Support Chat
+enum SupportSenderType {
+  AI
+  HUMAN
+}
+
+enum SupportConversationStatus {
+  OPEN
+  HANDOFF_REQUESTED
+  HUMAN_TAKEN
+  CLOSED
+}
+
+model SupportConversation {
+  id                  String                    @id @default(uuid()) @db.Uuid
+  user                User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId              String                    @unique @db.Uuid
+  status              SupportConversationStatus @default(OPEN)
+  handoffRequestedAt  DateTime?                 @map("handoff_requested_at") @db.Timestamptz(6)
+  takenOverByAdminId  String?                   @map("taken_over_by_admin_id") @db.Uuid
+  createdAt           DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  messages SupportMessage[]
+  adminReads SupportConversationRead[]
+  @@map("support_conversations")
+}
+
+model SupportConversationRead {
+  id             String               @id @default(uuid()) @db.Uuid
+  conversation   SupportConversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId String               @map("conversation_id") @db.Uuid
+  adminUserId    String               @map("admin_user_id") @db.Uuid
+  lastReadAt     DateTime             @map("last_read_at") @db.Timestamptz(6)
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([conversationId, adminUserId])
+  @@index([adminUserId])
+  @@map("support_conversation_reads")
+}
+
+model SupportMessage {
+  id             String                 @id @default(uuid()) @db.Uuid
+  conversation   SupportConversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId String                 @map("conversation_id") @db.Uuid
+  senderType     SupportSenderType      @map("sender_type")
+  senderUserId   String?                @map("sender_user_id") @db.Uuid
+  content        String                 @db.Text
+  attachments    String[]               @default([])
+  metadata       Json?
+  createdAt      DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([conversationId])
+  @@map("support_messages")
+}
+
+model SupportReferenceDocument {
+  id        String    @id @default(uuid()) @db.Uuid
+  name      String    @map("name") @db.VarChar(255)
+  slug      String    @unique @db.VarChar(100)
+  fileKey   String    @map("file_key") @db.VarChar(500)
+  fileUrl   String?   @map("file_url") @db.VarChar(1000)
+  indexedAt DateTime? @map("indexed_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  chunks SupportReferenceChunk[]
+  @@map("support_reference_documents")
+}
+
+model SupportReferenceChunk {
+  id         String                   @id @default(uuid()) @db.Uuid
+  document   SupportReferenceDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  documentId String                   @map("document_id") @db.Uuid
+  content    String                   @db.Text
+  embedding  Json
+  page       Int?                     @db.SmallInt
+  createdAt  DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([documentId])
+  @@map("support_reference_chunks")
 }
 
 enum ProposalStatus {

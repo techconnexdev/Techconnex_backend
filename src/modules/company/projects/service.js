@@ -468,6 +468,8 @@ export async function getProjectById(projectId, customerId) {
       select: {
         id: true,
         timeline: true, // Original company timeline
+        budgetMin: true,
+        budgetMax: true,
         acceptedProposalId: true, // To get the accepted proposal
       },
     });
@@ -526,6 +528,8 @@ export async function getProjectById(projectId, customerId) {
       type: "Project",
       serviceRequestId: originalServiceRequest?.id || null, // Include the original ServiceRequest ID for fetching proposals
       originalTimeline: originalServiceRequest?.timeline || null, // Original company timeline (string)
+      budgetMin: originalServiceRequest?.budgetMin ?? null,
+      budgetMax: originalServiceRequest?.budgetMax ?? null,
       providerProposedTimeline: acceptedProposal?.deliveryTime || null, // Provider's proposed timeline in days (number, frontend will format)
       approvedPrice, // Sum of all milestone amounts
       totalSpent, // Sum of PAID milestone amounts
@@ -717,7 +721,6 @@ export async function updateServiceRequestMilestones(
         },
       });
 
-      // Create new milestones
       await tx.serviceRequestMilestone.createMany({
         data: milestones.map((milestone, index) => ({
           serviceRequestId: serviceRequestId,
@@ -725,6 +728,7 @@ export async function updateServiceRequestMilestones(
           description: milestone.description,
           amount: milestone.amount,
           dueDate: milestone.dueDate ? new Date(milestone.dueDate) : null,
+          daysFromStart: milestone.daysFromStart != null ? Number(milestone.daysFromStart) : null,
           order: index + 1,
           status: "PENDING",
           source: "COMPANY",
@@ -898,6 +902,7 @@ export async function requestMilestoneChanges(dto) {
           projectTitle: milestone.project.title,
           reason: dto.reason || null,
           eventType: "milestone_changes_requested",
+          linkPath: `/provider/projects/${milestone.project.id}`,
         },
       });
     } catch (notificationError) {
@@ -995,6 +1000,7 @@ export async function approveIndividualMilestone(dto) {
           projectId: milestone.project.id,
           projectTitle: milestone.project.title,
           eventType: "milestone_approved",
+          linkPath: `/provider/projects/${milestone.project.id}`,
         },
       });
     } catch (notificationError) {
@@ -1076,8 +1082,13 @@ export async function payMilestone(dto) {
         userId: milestone.project.providerId,
         type: "payment",
         title: "Payment Update",
-
         content: `Payment for milestone "${milestone.title}" has been processed (RM ${milestone.amount})`,
+        metadata: {
+          projectId: milestone.project.id,
+          projectTitle: milestone.project.title,
+          milestoneId: milestone.id,
+          linkPath: `/provider/projects/${milestone.project.id}`,
+        },
       },
     });
 
@@ -1124,17 +1135,23 @@ export async function payMilestone(dto) {
       }
 
       // Create notification for both customer and provider
+      const projectId = updatedMilestone.project.id;
+      const projectTitle = updatedMilestone.project.title;
       await prisma.notification.createMany({
         data: [
           {
             userId: dto.customerId,
             type: "system",
-            content: `Project "${updatedMilestone.project.title}" has been completed. All milestones have been paid.`,
+            title: "Project Completed",
+            content: `Project "${projectTitle}" has been completed. All milestones have been paid.`,
+            metadata: { projectId, projectTitle, linkPath: `/customer/projects/${projectId}` },
           },
           {
             userId: milestone.project.providerId,
             type: "system",
-            content: `Project "${updatedMilestone.project.title}" has been completed. All milestones have been paid.`,
+            title: "Project Completed",
+            content: `Project "${projectTitle}" has been completed. All milestones have been paid.`,
+            metadata: { projectId, projectTitle, linkPath: `/provider/projects/${projectId}` },
           },
         ],
       });

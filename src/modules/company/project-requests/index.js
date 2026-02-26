@@ -3,6 +3,7 @@ import express from "express";
 import {
   getProjectRequestsController,
   getProjectRequestController,
+  getBidExplanationController,
   acceptProposalController,
   rejectProposalController,
   getProposalStatsController,
@@ -19,6 +20,7 @@ router.use(authenticateToken);
 router.get("/", getProjectRequestsController);
 router.get("/stats", getProposalStatsController);
 router.get("/export", exportRequestsController);
+router.get("/:id/bid-explanation", getBidExplanationController);
 router.get("/:id", getProjectRequestController);
 router.post("/:id/accept", acceptProposalController);
 router.post("/:id/reject", rejectProposalController);

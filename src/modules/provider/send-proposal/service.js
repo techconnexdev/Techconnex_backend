@@ -2,6 +2,7 @@
 import { prisma } from "./model.js";
 import { SendProposalDto, GetProposalsDto } from "./dto.js";
 import { createNotification } from "../../notifications/service.js";
+import { generateBidExplanationForStorage } from "../../company/project-requests/bid-explanation.js";
 
 export async function sendProposal(dto) {
   try {
@@ -64,7 +65,7 @@ export async function sendProposal(dto) {
         },
       });
 
-      // Create proposal milestones if provided
+      // Create proposal milestones if provided (use daysFromStart; dueDate is legacy)
       if (dto.milestones && dto.milestones.length > 0) {
         await tx.proposalMilestone.createMany({
           data: dto.milestones.map((milestone, index) => ({
@@ -73,6 +74,7 @@ export async function sendProposal(dto) {
             description: milestone.description,
             amount: milestone.amount,
             dueDate: milestone.dueDate ? new Date(milestone.dueDate) : null,
+            daysFromStart: milestone.daysFromStart != null ? Number(milestone.daysFromStart) : null,
             order: index + 1,
             status: "PENDING",
             source: "PROVIDER",
@@ -112,6 +114,10 @@ export async function sendProposal(dto) {
             budgetMin: true,
             budgetMax: true,
             timeline: true,
+            requirements: true,
+            deliverables: true,
+            skills: true,
+            priority: true,
             customer: {
               select: {
                 name: true,
@@ -134,6 +140,21 @@ export async function sendProposal(dto) {
       },
     });
 
+    // Generate AI fit explanation once and store in DB (saves tokens on every view)
+    try {
+      const aiExplanation = await generateBidExplanationForStorage(completeProposal);
+      if (aiExplanation) {
+        await prisma.proposal.update({
+          where: { id: proposal.id },
+          data: { aiFitExplanation: aiExplanation },
+        });
+        completeProposal.aiFitExplanation = aiExplanation;
+      }
+    } catch (aiErr) {
+      console.error("Failed to generate AI fit explanation for proposal:", aiErr);
+      // Proposal is still created; aiFitExplanation remains null
+    }
+
     // Notify company about the new proposal
     try {
       const providerName = completeProposal.provider?.name || "a provider";
@@ -150,6 +171,7 @@ export async function sendProposal(dto) {
           providerName: completeProposal.provider?.name || null,
           bidAmount: dto.bidAmount,
           eventType: "new_proposal",
+          linkPath: `/customer/projects/${dto.serviceRequestId}`,
         },
       });
     } catch (notificationError) {
@@ -390,7 +412,6 @@ export async function updateProposalMilestones(proposalId, providerId, milestone
         },
       });
 
-      // Create new milestones
       await tx.proposalMilestone.createMany({
         data: milestones.map((milestone, index) => ({
           proposalId: proposalId,
@@ -398,6 +419,7 @@ export async function updateProposalMilestones(proposalId, providerId, milestone
           description: milestone.description,
           amount: milestone.amount,
           dueDate: milestone.dueDate ? new Date(milestone.dueDate) : null,
+          daysFromStart: milestone.daysFromStart != null ? Number(milestone.daysFromStart) : null,
           order: index + 1,
           status: "PENDING",
           source: "PROVIDER",

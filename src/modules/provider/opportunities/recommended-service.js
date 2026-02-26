@@ -3,74 +3,12 @@ import { prisma } from "./model.js";
 import { ChatOpenAI } from "@langchain/openai";
 import { PromptTemplate } from "@langchain/core/prompts";
 import { RunnableSequence } from "@langchain/core/runnables";
+import { calculateMatchScore } from "../../../shared/recommendation-match-score.js";
 
 // In-memory cache for recommendations (providerId -> { recommendations, cachedAt })
 const recommendationsCache = new Map();
 
 const CACHE_DURATION_MS = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
-
-/**
- * Calculate match score between provider and service request
- * Based on skills overlap and category match
- */
-function calculateMatchScore(providerProfile, serviceRequest) {
-  let score = 0;
-  const maxScore = 100;
-
-  // Skills overlap (70% weight)
-  const providerSkills = (providerProfile.skills || []).map(s => s.toLowerCase());
-  const requestSkills = (serviceRequest.skills || []).map(s => s.toLowerCase());
-  
-  if (requestSkills.length > 0) {
-    const matchingSkills = requestSkills.filter(skill => 
-      providerSkills.some(ps => ps.includes(skill) || skill.includes(ps))
-    );
-    const skillsScore = (matchingSkills.length / requestSkills.length) * 70;
-    score += skillsScore;
-  } else {
-    // If no skills specified, give neutral score
-    score += 35;
-  }
-
-  // Category match (30% weight)
-  if (providerProfile.major && serviceRequest.category) {
-    const providerMajor = providerProfile.major.toLowerCase();
-    const requestCategory = serviceRequest.category.toLowerCase();
-    
-    // Exact match
-    if (providerMajor === requestCategory || providerMajor.includes(requestCategory) || requestCategory.includes(providerMajor)) {
-      score += 30;
-    } else {
-      // Partial match (some categories are related)
-      const categoryKeywords = {
-        'web': ['web', 'frontend', 'backend', 'fullstack'],
-        'mobile': ['mobile', 'app', 'ios', 'android'],
-        'cloud': ['cloud', 'aws', 'azure', 'devops'],
-        'ai': ['ai', 'ml', 'machine learning', 'artificial intelligence'],
-        'data': ['data', 'analytics', 'database'],
-        'design': ['design', 'ui', 'ux'],
-      };
-      
-      let foundMatch = false;
-      for (const [key, keywords] of Object.entries(categoryKeywords)) {
-        if (keywords.some(k => providerMajor.includes(k) || requestCategory.includes(k))) {
-          score += 15; // Partial match
-          foundMatch = true;
-          break;
-        }
-      }
-      
-      if (!foundMatch) {
-        score += 5; // Minimal match
-      }
-    }
-  } else {
-    // If no category info, give neutral score
-    score += 15;
-  }
-
-  return Math.min(Math.round(score), maxScore);
-}
 
 /**
  * Get cached recommendations if still valid

@@ -30,14 +30,26 @@ async function getThisMonthSpent(userId, firstDay, lastDay) {
   });
 }
 
-async function getAverageTransaction(userId) {
-  return prisma.payment.aggregate({
-    _avg: { amount: true },
-    where: {
-      status: { in: ["ESCROWED", "RELEASED", "TRANSFERRED"] },
-      project: { customerId: userId },
-    },
-  });
+/**
+ * Returns average transaction amount per year (year-over-year) for completed payments.
+ * Each row: { year: number, average: number }
+ */
+async function getAverageTransactionByYear(userId) {
+  const rows = await prisma.$queryRaw`
+    SELECT EXTRACT(YEAR FROM p."createdAt")::int as year,
+           AVG(p.amount)::float as average
+    FROM "Payment" p
+    INNER JOIN "Project" pr ON p."projectId" = pr.id
+    WHERE p.status IN ('ESCROWED', 'RELEASED', 'TRANSFERRED')
+      AND pr."customerId" = ${userId}
+    GROUP BY EXTRACT(YEAR FROM p."createdAt")
+    ORDER BY year DESC
+    LIMIT 6
+  `;
+  return rows.map((r) => ({
+    year: Number(r.year),
+    average: Number(r.average) || 0,
+  }));
 }
 
 async function getRecentInvoices(userId, limit = 5) {
@@ -247,7 +259,7 @@ export {
   getTotalSpent,
   getPendingPayments,
   getThisMonthSpent,
-  getAverageTransaction,
+  getAverageTransactionByYear,
   getRecentInvoices,
   getRecentTransactions,
   getAllTransactions,

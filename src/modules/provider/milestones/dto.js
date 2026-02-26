@@ -42,24 +42,9 @@ export class UpsertMilestonesDto {
         totalAmount += milestone.amount
       }
 
-      if (!milestone.dueDate || typeof milestone.dueDate !== 'string') {
-        errors.push(`${prefix}: Due date is required`)
-      } else {
-        // Validate ISO date
-        const date = new Date(milestone.dueDate)
-        if (isNaN(date.getTime())) {
-          errors.push(`${prefix}: Due date must be a valid ISO date`)
-        } else {
-          // Validate that due date is not in the past
-          const today = new Date()
-          today.setHours(0, 0, 0, 0) // Set to start of day for comparison
-          const dueDateOnly = new Date(date)
-          dueDateOnly.setHours(0, 0, 0, 0) // Set to start of day for comparison
-          
-          if (dueDateOnly < today) {
-            errors.push(`${prefix}: Due date cannot be in the past. Please select today or a future date.`)
-          }
-        }
+      const daysFromStart = milestone.daysFromStart != null ? Number(milestone.daysFromStart) : null
+      if (daysFromStart == null || !Number.isInteger(daysFromStart) || daysFromStart < 1) {
+        errors.push(`${prefix}: Days from project start is required and must be a positive integer (e.g. 7 for "7 days after start")`)
       }
 
       // Sequence validation
@@ -105,7 +90,7 @@ export class UpsertMilestonesDto {
       title: milestone.title.trim(),
       description: milestone.description ? milestone.description.trim() : null,
       amount: Number(milestone.amount),
-      dueDate: milestone.dueDate
+      daysFromStart: milestone.daysFromStart != null ? Number(milestone.daysFromStart) : null
     }))
   }
 }

@@ -48,6 +48,12 @@ export const sendMessage = async (messageData, senderId) => {
     throw new Error("Attachments are required for file messages");
   }
 
+  // Block messaging if either user has reported the other
+  const reportExists = await hasReportBetweenUsers(senderId, receiverId);
+  if (reportExists) {
+    throw new Error(MESSAGING_BLOCKED_REASON);
+  }
+
   try {
     const message = await messageModel.createMessage({
       senderId,
@@ -163,4 +169,77 @@ export const getUnreadMessageCount = async (userId) => {
     throw new Error("User ID is required");
   }
   return messageModel.getUnreadMessageCount(userId);
+};
+
+const ALREADY_REPORTED_MSG =
+  "You have already reported this user. Our admin team is working on it.";
+
+const MESSAGING_BLOCKED_REASON =
+  "Messaging is disabled for this conversation. One user has reported the other.";
+
+// Check if there is a report between two users (in either direction)
+export const hasReportBetweenUsers = async (userId1, userId2) => {
+  if (!userId1 || !userId2) return false;
+  const existing = await prisma.conversationReport.findFirst({
+    where: {
+      OR: [
+        { reporterId: userId1, reportedUserId: userId2 },
+        { reporterId: userId2, reportedUserId: userId1 },
+      ],
+    },
+  });
+  return !!existing;
+};
+
+// Check if reporter has already reported this user
+export const hasUserReportedConversation = async (reporterId, reportedUserId) => {
+  if (!reporterId || !reportedUserId) return false;
+  const existing = await prisma.conversationReport.findFirst({
+    where: {
+      reporterId,
+      reportedUserId,
+    },
+  });
+  return !!existing;
+};
+
+// Report a conversation
+export const reportConversation = async (reporterId, { reportedUserId, reason, additionalDetails }) => {
+  if (!reporterId) {
+    throw new Error("Reporter ID is required");
+  }
+  if (!reportedUserId) {
+    throw new Error("Reported user ID is required");
+  }
+  if (!reason) {
+    throw new Error("Report reason is required");
+  }
+
+  const validReasons = [
+    "OUTSOURCE_OFF_PLATFORM",
+    "SPAM_IRRELEVANT",
+    "HARASSMENT_INAPPROPRIATE",
+    "FRAUD_IMPERSONATION",
+  ];
+  if (!validReasons.includes(reason)) {
+    throw new Error("Invalid report reason");
+  }
+
+  // Cannot report yourself
+  if (reporterId === reportedUserId) {
+    throw new Error("You cannot report yourself");
+  }
+
+  // Prevent duplicate reports
+  const alreadyReported = await hasUserReportedConversation(reporterId, reportedUserId);
+  if (alreadyReported) {
+    throw new Error(ALREADY_REPORTED_MSG);
+  }
+
+  return messageModel.createConversationReport({
+    reporterId,
+    reportedUserId,
+    reason,
+    additionalDetails: additionalDetails?.trim() || null,
+  });
 };

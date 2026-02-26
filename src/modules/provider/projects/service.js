@@ -334,6 +334,7 @@ export async function updateProjectStatus(dto) {
           projectTitle: project.title,
           newStatus: dto.status,
           eventType: "project_status_updated",
+          linkPath: `/customer/projects/${dto.projectId}`,
         },
       });
     } catch (notificationError) {
