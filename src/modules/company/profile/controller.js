@@ -1,5 +1,6 @@
 import CompanyProfileService from "./service.js";
 import { PrismaClient } from "@prisma/client";
+import { upsertCompanyAiDraftByUserId } from "../../auth/company/company-ai-draft.js";
 
 const prisma = new PrismaClient();
 
@@ -71,9 +72,16 @@ async function upsertProfile(req, res) {
   try {
     const userId = req.user.userId;
     const profileData = req.body;
-    
+
     const profile = await CompanyProfileService.upsertProfile(userId, profileData);
-    
+
+    // Generate or overwrite AI summary for this company (one draft per customer; re-submit overwrites)
+    try {
+      await upsertCompanyAiDraftByUserId(userId);
+    } catch (aiErr) {
+      console.error("AI draft generation failed (profile still saved):", aiErr);
+    }
+
     res.status(200).json({
       success: true,
       message: "Company profile saved successfully",

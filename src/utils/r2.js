@@ -1,6 +1,6 @@
 // utils/r2.js
 import { S3Client } from "@aws-sdk/client-s3";
-import { PutObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand, GetObjectCommand, HeadObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // Validate required environment variables
@@ -84,6 +84,13 @@ const ALLOWED_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
     "text/plain",
     "text/csv",
+    // Images (for proposals, portfolios, etc.)
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "image/svg+xml",
   ],
   video: [
     "video/mp4",
@@ -315,6 +322,24 @@ export async function uploadFileToR2(fileBuffer, key, mimeType) {
     Key: key,
     Body: fileBuffer,
     ContentType: mimeType,
+  });
+
+  await r2Client.send(command);
+}
+
+/**
+ * Delete a file from R2
+ * @param {string} key - R2 object key
+ * @returns {Promise<void>}
+ */
+export async function deleteFileFromR2(key) {
+  if (!r2Client || !R2_BUCKET) {
+    throw new Error("R2 is not configured. Please set R2 environment variables.");
+  }
+
+  const command = new DeleteObjectCommand({
+    Bucket: R2_BUCKET,
+    Key: key,
   });
 
   await r2Client.send(command);

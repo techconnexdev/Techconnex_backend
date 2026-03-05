@@ -7,14 +7,13 @@ async function register(req, res) {
     // Convert raw body → DTO
     const dto = new RegisterProviderDto(req.body);
 
-    const user = await registerProvider(dto);
-    res.status(201).json({ success: true, user });
+    const { token, user } = await registerProvider(dto);
+    res.status(201).json({ success: true, token, user });
   } catch (error) {
     console.error(error);
     res.status(400).json({ success: false, message: error.message });
   }
 }
-
 
 async function becomeCustomerHandler(req, res) {
   try {
@@ -39,12 +38,10 @@ async function updatePasswordHandler(req, res) {
     const { oldPassword, newPassword } = req.body;
 
     if (!oldPassword || !newPassword) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Both old and new passwords are required",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Both old and new passwords are required",
+      });
     }
 
     await updatePassword(userId, oldPassword, newPassword);
@@ -61,5 +58,5 @@ export {
   register,
   // login,
   becomeCustomerHandler,
-  updatePasswordHandler
+  updatePasswordHandler,
 };

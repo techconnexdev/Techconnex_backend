@@ -153,6 +153,33 @@ export const createNotification = async (data) => {
 };
 
 /**
+ * Send an announcement notification to all users (for admin broadcast).
+ * Creates one notification per user with type "announcement" so it appears under Announcements.
+ * @returns { number } count of users notified
+ */
+export const createBroadcastNotification = async ({ title, content }) => {
+  const users = await prisma.user.findMany({
+    select: { id: true },
+  });
+  const type = "announcement";
+  const metadata = { eventType: "announcement" };
+  await Promise.all(
+    users.map((u) =>
+      prisma.notification.create({
+        data: {
+          userId: u.id,
+          title,
+          type,
+          content,
+          metadata,
+        },
+      })
+    )
+  );
+  return users.length;
+};
+
+/**
  * Notify all admin users about a new user registration
  * @param {Object} userData - The newly registered user data
  * @param {string} userData.id - User ID

@@ -1,5 +1,6 @@
 // server.js
 import "dotenv/config.js";
+import * as Sentry from "@sentry/node";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -37,6 +38,15 @@ app.use(express.urlencoded({ extended: true }));
 // Register routes
 app.use("", routes);
 
+// TEMPORARY: Sentry test route — remove before production
+app.get("/debug-sentry", (req, res) => {
+  Sentry.captureMessage("Sentry warning test from /debug-sentry", "warning");
+  if (req.query.error === "1") {
+    throw new Error("Sentry error test from /debug-sentry");
+  }
+  res.json({ ok: true, message: "Sentry warning sent. Add ?error=1 to trigger an error." });
+});
+
 // Health check endpoint
 app.get("/health", (req, res) => {
   res.json({ ok: true, message: "API is healthy" });
@@ -47,9 +57,13 @@ app.use((req, res) => {
   res.status(404).json({ success: false, message: "Route not found" });
 });
 
+// Sentry: error handler (after all routes, before other error middlewares)
+Sentry.setupExpressErrorHandler(app);
+
 // Global error handler
 app.use((err, req, res, next) => {
   console.error("💥 Global error:", err);
+  Sentry.captureException(err);
   const status = err.status || 500;
   res.status(status).json({
     success: false,

@@ -144,6 +144,21 @@ class ProviderProfileModel {
     }
   }
 
+  /** Update user phone only when not already set (allows adding phone from profile edit). */
+  static async updateUserPhoneIfEmpty(userId, phone) {
+    const trimmed = phone != null && String(phone).trim() !== "" ? String(phone).trim() : null;
+    if (!trimmed) return null;
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { phone: true },
+    });
+    if (user?.phone && String(user.phone).trim() !== "") return null;
+    return prisma.user.update({
+      where: { id: userId },
+      data: { phone: trimmed },
+    });
+  }
+
   // Check if profile exists
   static async profileExists(userId) {
     try {
@@ -318,17 +333,11 @@ class ProviderProfileModel {
           label: "Preferred Project Duration",
           value: profile.preferredProjectDuration,
         },
-        workPreference: {
-          weight: 3,
-          label: "Work Preference",
-          value: profile.workPreference,
-        },
 
-        // Team & Additional Info (10 points)
-        teamSize: { weight: 3, label: "Team Size", value: profile.teamSize },
-        website: { weight: 4, label: "Website", value: profile.website },
+        // Additional Info (work preference / team size excluded from completion)
+        website: { weight: 7, label: "Website", value: profile.website },
         portfolioLinks: {
-          weight: 3,
+          weight: 6,
           label: "Portfolio Links",
           value: Array.isArray(profile.portfolioLinks)
             ? profile.portfolioLinks.filter((link) => link && link.trim().length > 0)
@@ -355,8 +364,9 @@ class ProviderProfileModel {
 
       let totalScore = 0;
       const suggestions = [];
+      const checklist = [];
 
-      // Calculate score and collect suggestions
+      // Calculate score and collect suggestions + checklist
       for (const [field, config] of Object.entries(fieldWeights)) {
         const { weight, label, value, minLength, minCount, isCount } = config;
         let isComplete = false;
@@ -433,6 +443,7 @@ class ProviderProfileModel {
         } else if (suggestionMessage) {
           suggestions.push(suggestionMessage);
         }
+        checklist.push({ key: field, label: config.label, done: isComplete });
       }
 
       // Sort suggestions by priority (missing core fields first)
@@ -451,8 +462,6 @@ class ProviderProfileModel {
         "minimum project budget",
         "maximum project budget",
         "preferred project duration",
-        "work preference",
-        "team size",
         "website",
         "portfolio links",
         "availability status",
@@ -477,6 +486,7 @@ class ProviderProfileModel {
       return {
         completion: Math.min(100, Math.round(totalScore)),
         suggestions: topSuggestions,
+        checklist,
         totalFields: Object.keys(fieldWeights).length,
         completedFields:
           Object.keys(fieldWeights).length - topSuggestions.length,

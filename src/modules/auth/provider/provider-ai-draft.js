@@ -93,25 +93,58 @@ Output only the brief text, nothing else.
       } with skills in ${skills}`.slice(0, 180);
     }
 
-    // Save to AiDraft table
-    const saved = await prisma.aiDraft.create({
-      data: {
+    // Upsert: overwrite existing draft for this provider profile (no new records on re-submit)
+    const existing = await prisma.aiDraft.findFirst({
+      where: {
         type: "PROVIDER",
         referenceId: providerProfileId,
-        summary: text,
-        version: 1,
-        sourceData: {
-          name: profile.user?.name || null,
-          major: profile.major || null,
-          skills: profile.skills || [],
-          yearsExperience: profile.yearsExperience || null,
-        },
       },
     });
+
+    const draftData = {
+      summary: text,
+      sourceData: {
+        name: profile.user?.name || null,
+        major: profile.major || null,
+        skills: profile.skills || [],
+        yearsExperience: profile.yearsExperience || null,
+      },
+    };
+
+    const saved = existing
+      ? await prisma.aiDraft.update({
+          where: { id: existing.id },
+          data: {
+            ...draftData,
+            version: (existing.version || 1) + 1,
+          },
+        })
+      : await prisma.aiDraft.create({
+          data: {
+            type: "PROVIDER",
+            referenceId: providerProfileId,
+            version: 1,
+            ...draftData,
+          },
+        });
 
     return saved;
   } catch (error) {
     console.error("createProviderAiDraft error:", error);
     throw error;
   }
+}
+
+/**
+ * Generate or overwrite AI summary for the current user's provider profile.
+ * Use after profile upsert so one draft per provider; re-submitting overwrites.
+ * @param {string} userId - User.id (uuid)
+ */
+export async function upsertProviderAiDraftByUserId(userId) {
+  const profile = await prisma.providerProfile.findUnique({
+    where: { userId },
+    select: { id: true },
+  });
+  if (!profile) throw new Error("Provider profile not found");
+  return createProviderAiDraft(profile.id);
 }

@@ -49,8 +49,8 @@ export async function getOpportunities(dto) {
 
     if (dto.search) {
       where.OR = [
-        { title: { contains: dto.search, mode: 'insensitive' } },
-        { description: { contains: dto.search, mode: 'insensitive' } },
+        { title: { contains: dto.search, mode: "insensitive" } },
+        { description: { contains: dto.search, mode: "insensitive" } },
       ];
     }
 
@@ -99,7 +99,7 @@ export async function getOpportunities(dto) {
     ]);
 
     // Check which ServiceRequests the current provider has already proposed to
-    const serviceRequestIds = serviceRequests.map(sr => sr.id);
+    const serviceRequestIds = serviceRequests.map((sr) => sr.id);
     const existingProposals = await prisma.proposal.findMany({
       where: {
         providerId: dto.providerId,
@@ -112,20 +112,25 @@ export async function getOpportunities(dto) {
       },
     });
 
-    const proposedServiceRequestIds = new Set(existingProposals.map(p => p.serviceRequestId));
+    const proposedServiceRequestIds = new Set(
+      existingProposals.map((p) => p.serviceRequestId),
+    );
 
-    // Fetch provider profile for match scoring (same algorithm as AI Recommended)
+    // Fetch provider profile for match scoring only when provider has skills
     let providerProfile = null;
-    if (dto.providerId && (dto.sort === 'best-match' || !dto.sort)) {
+    if (dto.providerId && (dto.sort === "best-match" || !dto.sort)) {
       const profile = await prisma.providerProfile.findUnique({
         where: { userId: dto.providerId },
       });
-      providerProfile = profile;
+      const hasSkills = Array.isArray(profile?.skills) && profile.skills.length > 0;
+      providerProfile = hasSkills ? profile : null;
     }
 
-    // Add hasProposed and matchScore; sort by best-match when requested
-    let opportunities = serviceRequests.map(sr => {
-      const score = providerProfile ? calculateMatchScore(providerProfile, sr) : null;
+    // Add hasProposed and matchScore (null when no provider skills); sort by best-match only when scores exist
+    let opportunities = serviceRequests.map((sr) => {
+      const score = providerProfile
+        ? calculateMatchScore(providerProfile, sr)
+        : null;
       return {
         ...sr,
         hasProposed: proposedServiceRequestIds.has(sr.id),
@@ -133,8 +138,10 @@ export async function getOpportunities(dto) {
       };
     });
 
-    if (dto.sort === 'best-match' && providerProfile) {
-      opportunities = opportunities.sort((a, b) => (b.matchScore ?? 0) - (a.matchScore ?? 0));
+    if (dto.sort === "best-match" && providerProfile) {
+      opportunities = opportunities.sort(
+        (a, b) => (b.matchScore ?? 0) - (a.matchScore ?? 0),
+      );
     }
     // else: already ordered by createdAt desc from findMany
 

@@ -12,8 +12,8 @@ async function register(req, res) {
     // Convert raw body → DTO
     const dto = new RegisterCompanyDto(req.body);
 
-    const user = await registerCompany(dto);
-    res.status(201).json({ success: true, user });
+    const { user, token } = await registerCompany(dto);
+    res.status(201).json({ success: true, user, token });
   } catch (error) {
     console.error(error);
     res.status(400).json({ success: false, message: error.message });

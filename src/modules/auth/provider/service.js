@@ -32,9 +32,11 @@ async function registerProvider(dto) {
     });
   } catch (notificationError) {
     // Log error but don't fail registration
-    console.error("Failed to notify admins of new user registration:", notificationError);
+    console.error(
+      "Failed to notify admins of new user registration:",
+      notificationError,
+    );
   }
-
 
   // Try to generate AI draft for provider profile if profile exists
   try {
@@ -48,7 +50,16 @@ async function registerProvider(dto) {
     console.error("Failed to create provider AI draft:", err);
   }
 
-  return user;
+  // Generate token for auto-login (same as auth login)
+  const token = jwt.sign(
+    { userId: user.id, role: user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: "7d" },
+  );
+
+  // Return user without password
+  const { password: _p, ...safeUser } = user;
+  return { token, user: safeUser };
 }
 
 async function becomeCustomer(userId, { description = "", industry = "" }) {

@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
-import { uploadFileToR2, getPublicUrl, downloadFileFromR2 } from "../../../utils/r2.js";
+import { uploadFileToR2, getPublicUrl, downloadFileFromR2, deleteFileFromR2 } from "../../../utils/r2.js";
 import { indexDocument } from "../../support-chat/rag-service.js";
+import { emitSupportUpdate } from "../../../io.js";
 
 const prisma = new PrismaClient();
 
@@ -190,6 +191,20 @@ export async function sendAdminMessage(req, res) {
       },
     });
 
+    emitSupportUpdate(id, conv.userId, {
+      status: "HUMAN_TAKEN",
+      messages: [
+        {
+          id: message.id,
+          senderType: message.senderType,
+          senderUserId: message.senderUserId,
+          content: message.content,
+          attachments: message.attachments || [],
+          createdAt: message.createdAt,
+        },
+      ],
+    });
+
     return res.json({
       success: true,
       data: {
@@ -223,6 +238,7 @@ export async function updateConversation(req, res) {
       where: { id },
       data: { status },
     });
+    emitSupportUpdate(id, conv.userId, { status });
     return res.json({ success: true, data: conv });
   } catch (err) {
     console.error("Admin support updateConversation:", err);
@@ -328,6 +344,32 @@ export async function reindexReference(req, res) {
     });
   } catch (err) {
     console.error("Admin support reindexReference:", err);
+    return res.status(500).json({ success: false, message: err.message || "Internal server error" });
+  }
+}
+
+/**
+ * DELETE /admin/support/references/:id – delete reference document and its RAG chunks; optionally remove file from R2
+ */
+export async function deleteReference(req, res) {
+  try {
+    const { id } = req.params;
+    const doc = await prisma.supportReferenceDocument.findUnique({ where: { id } });
+    if (!doc) return res.status(404).json({ success: false, message: "Document not found" });
+
+    if (doc.fileKey) {
+      try {
+        await deleteFileFromR2(doc.fileKey);
+      } catch (e) {
+        console.warn("R2 delete failed (file may already be gone):", e.message);
+      }
+    }
+
+    await prisma.supportReferenceDocument.delete({ where: { id } });
+
+    return res.json({ success: true, message: "Reference document deleted" });
+  } catch (err) {
+    console.error("Admin support deleteReference:", err);
     return res.status(500).json({ success: false, message: err.message || "Internal server error" });
   }
 }

@@ -5,11 +5,21 @@ class ProviderProfileDto {
     this.location = data.location;
     this.hourlyRate = data.hourlyRate;
     this.availability = data.availability;
-    this.languages = data.languages || [];
+    // Only set languages when provided (so other steps don't overwrite with [])
+    this.languages = data && Object.prototype.hasOwnProperty.call(data, "languages")
+      ? (Array.isArray(data.languages)
+          ? data.languages.filter((l) => l != null && String(l).trim() !== "")
+          : [].concat(data.languages).filter((l) => l != null && String(l).trim() !== ""))
+      : undefined;
     this.website = data.website;
     this.portfolioLinks = data.portfolioLinks || [];
     this.profileImageUrl = data.profileImageUrl; // 🆕 Profile image
-    this.skills = data.skills || [];
+    // Only set skills when provided (so step 1 doesn't overwrite with []); normalize to string[]
+    this.skills = data && Object.prototype.hasOwnProperty.call(data, "skills")
+      ? (Array.isArray(data.skills)
+          ? data.skills.filter((s) => s != null && String(s).trim() !== "")
+          : [].concat(data.skills).filter((s) => s != null && String(s).trim() !== ""))
+      : undefined;
     this.yearsExperience = data.yearsExperience;
     this.minimumProjectBudget = data.minimumProjectBudget;
     this.maximumProjectBudget = data.maximumProjectBudget;
@@ -205,13 +215,20 @@ class ProviderProfileDto {
       teamSize: this.teamSize,
     };
     
-    // Remove any undefined/null values to avoid Prisma errors
+    // Remove any undefined/null values to avoid Prisma errors (omit key so we don't overwrite with [] when not sent)
     Object.keys(updateData).forEach(key => {
       if (updateData[key] === undefined || updateData[key] === null) {
         delete updateData[key];
       }
     });
-    
+    // Ensure skills is always a string[] when present (Prisma String[])
+    if (Array.isArray(updateData.skills)) {
+      updateData.skills = updateData.skills.map((s) => String(s).trim()).filter(Boolean);
+    }
+    // Ensure languages is always a string[] when present (Prisma String[])
+    if (Array.isArray(updateData.languages)) {
+      updateData.languages = updateData.languages.map((l) => String(l).trim()).filter(Boolean);
+    }
     return updateData;
   }
 

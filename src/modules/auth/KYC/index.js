@@ -1,5 +1,6 @@
 import express from "express";
 import { createKyc, getAllKyc, reviewKycDocument } from "./controller.js";
+import { uploadKycFiles, uploadKycMulter } from "./uploadMiddleware.js";
 import { authenticateToken } from "../../../middlewares/auth.js";
 import jwt from "jsonwebtoken";
 
@@ -46,6 +47,8 @@ const optionalAuthenticate = (req, res, next) => {
 // KYC upload now uses R2 - frontend uploads to R2 first, then sends key/URL
 // Authentication is optional for registration flows
 router.post("/", optionalAuthenticate, createKyc);
+// Multipart upload (FormData with "type" + "documents") for clients that POST to /kyc/upload
+router.post("/upload", optionalAuthenticate, uploadKycMulter, uploadKycFiles);
 router.get("/", authenticateToken, getAllKyc);
 router.put("/:userId", authenticateToken, reviewKycDocument);
 

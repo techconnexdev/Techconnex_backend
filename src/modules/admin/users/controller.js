@@ -1,5 +1,6 @@
 import { userService } from "./service.js";
 import { generateAdminUsersPDF } from "../../../utils/usersPdfGenerator.js";
+import { createBroadcastNotification } from "../../notifications/service.js";
 
 export const userController = {
   async getAllUsers(req, res) {
@@ -132,29 +133,63 @@ export const userController = {
     try {
       const { role, status, search } = req.query;
       const filters = { role, status, search };
-      
+
       // Fetch all users with filters
       const users = await userService.getAllUsers(filters);
-      
+
       // Get stats for the PDF
       const stats = await userService.getUserStats();
-      
+
       // Generate PDF
       const pdfBuffer = await generateAdminUsersPDF(users, filters);
-      
+
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader(
         "Content-Disposition",
         `attachment; filename="admin-users-${Date.now()}.pdf"`
       );
       res.setHeader("Content-Length", pdfBuffer.length);
-      
+
       res.send(pdfBuffer);
     } catch (error) {
       console.error("Error in exportUsers:", error);
       res.status(500).json({
         success: false,
         error: error.message,
+      });
+    }
+  },
+
+  /** POST /admin/users/notifications/broadcast – send announcement to all users */
+  async broadcastNotification(req, res) {
+    try {
+      const { title, content } = req.body;
+      if (!title || typeof title !== "string" || !title.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Title is required",
+        });
+      }
+      if (!content || typeof content !== "string" || !content.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Content is required",
+        });
+      }
+      const count = await createBroadcastNotification({
+        title: title.trim(),
+        content: content.trim(),
+      });
+      return res.json({
+        success: true,
+        message: `Notification sent to ${count} user(s)`,
+        count,
+      });
+    } catch (error) {
+      console.error("Error in broadcastNotification:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to send broadcast notification",
       });
     }
   },

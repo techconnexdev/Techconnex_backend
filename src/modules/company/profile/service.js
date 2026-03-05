@@ -1,25 +1,29 @@
 import CompanyProfileModel from "./model.js";
-import { CompanyProfileDto, CompanyProfileUpdateDto, CompanyProfileResponseDto } from "./dto.js";
+import {
+  CompanyProfileDto,
+  CompanyProfileUpdateDto,
+  CompanyProfileResponseDto,
+} from "./dto.js";
 
 class CompanyProfileService {
   // Get company profile by user ID
   static async getProfile(userId) {
     try {
       const profile = await CompanyProfileModel.getProfileByUserId(userId);
-      
+
       if (!profile) {
         throw new Error("Company profile not found");
       }
 
       // Calculate completion percentage
       const completion = await CompanyProfileModel.getProfileCompletion(userId);
-      
+
       // Format response using DTO
       const responseDto = new CompanyProfileResponseDto({
         ...profile,
         completion,
       });
-      
+
       return responseDto.toResponse();
     } catch (error) {
       throw new Error(`Failed to get company profile: ${error.message}`);
@@ -40,10 +44,14 @@ class CompanyProfileService {
       }
 
       // Create profile
-      const profile = await CompanyProfileModel.createProfile(userId, dto.toUpdateData());
+      const profile = await CompanyProfileModel.createProfile(
+        userId,
+        dto.toUpdateData(),
+      );
 
       // Update completion percentage
-      const completion = await CompanyProfileModel.updateProfileCompletion(userId);
+      const completion =
+        await CompanyProfileModel.updateProfileCompletion(userId);
 
       return {
         ...profile,
@@ -62,7 +70,8 @@ class CompanyProfileService {
         const profile = await CompanyProfileModel.updateProfile(userId, {
           profileImageUrl: updateData.profileImageUrl,
         });
-        const completion = await CompanyProfileModel.getProfileCompletion(userId);
+        const completion =
+          await CompanyProfileModel.getProfileCompletion(userId);
         const responseDto = new CompanyProfileResponseDto({
           ...profile,
           completion,
@@ -70,13 +79,17 @@ class CompanyProfileService {
         return responseDto.toResponse();
       }
 
-      // Validate input data for full updates
-      const dto = new CompanyProfileUpdateDto(updateData);
+      // Extract User-level fields (name, phone); update profile with the rest
+      const { phone, name, ...profileUpdate } = updateData;
+      const dto = new CompanyProfileUpdateDto(profileUpdate);
       dto.validate();
 
       // Additional validation: Check mediaGallery limit if it's being updated
-      if (updateData.mediaGallery !== undefined && Array.isArray(updateData.mediaGallery)) {
-        if (updateData.mediaGallery.length > 10) {
+      if (
+        profileUpdate.mediaGallery !== undefined &&
+        Array.isArray(profileUpdate.mediaGallery)
+      ) {
+        if (profileUpdate.mediaGallery.length > 10) {
           throw new Error("Media gallery cannot contain more than 10 images");
         }
       }
@@ -88,17 +101,42 @@ class CompanyProfileService {
       }
 
       // Update profile
-      const profile = await CompanyProfileModel.updateProfile(userId, dto.toUpdateData());
+      const profile = await CompanyProfileModel.updateProfile(
+        userId,
+        dto.toUpdateData(),
+      );
+
+      // If name provided, update user name (company name)
+      if (name != null && String(name).trim() !== "") {
+        const updatedUser = await CompanyProfileModel.updateUserName(
+          userId,
+          name,
+        );
+        if (updatedUser && profile.user) {
+          profile.user = { ...profile.user, name: updatedUser.name };
+        }
+      }
+      // If phone provided and user has no phone yet, set it (edit profile can add phone once)
+      if (phone != null && String(phone).trim() !== "") {
+        const updatedUser = await CompanyProfileModel.updateUserPhoneIfEmpty(
+          userId,
+          phone,
+        );
+        if (updatedUser && profile.user) {
+          profile.user = { ...profile.user, phone: updatedUser.phone };
+        }
+      }
 
       // Update completion percentage
-      const completion = await CompanyProfileModel.updateProfileCompletion(userId);
-      
+      const completion =
+        await CompanyProfileModel.updateProfileCompletion(userId);
+
       // Format response using DTO to ensure consistent structure
       const responseDto = new CompanyProfileResponseDto({
         ...profile,
         completion,
       });
-      
+
       return responseDto.toResponse();
     } catch (error) {
       throw new Error(`Failed to update company profile: ${error.message}`);
@@ -110,11 +148,33 @@ class CompanyProfileService {
     try {
       // Check if profile exists
       const exists = await CompanyProfileModel.profileExists(userId);
-      
+
       if (exists) {
         return await this.updateProfile(userId, profileData);
       } else {
-        return await this.createProfile(userId, profileData);
+        const { phone, name, ...createData } = profileData;
+        const result = await this.createProfile(userId, createData);
+        // If name provided, update user name (company name)
+        if (name != null && String(name).trim() !== "") {
+          const updatedUser = await CompanyProfileModel.updateUserName(
+            userId,
+            name,
+          );
+          if (updatedUser && result.user) {
+            result.user = { ...result.user, name: updatedUser.name };
+          }
+        }
+        // If phone provided and user has no phone yet, set it
+        if (phone != null && String(phone).trim() !== "") {
+          const updatedUser = await CompanyProfileModel.updateUserPhoneIfEmpty(
+            userId,
+            phone,
+          );
+          if (updatedUser && result.user) {
+            result.user = { ...result.user, phone: updatedUser.phone };
+          }
+        }
+        return result;
       }
     } catch (error) {
       throw new Error(`Failed to upsert company profile: ${error.message}`);
@@ -124,7 +184,8 @@ class CompanyProfileService {
   // Get profile completion percentage with suggestions
   static async getProfileCompletion(userId) {
     try {
-      const completionData = await CompanyProfileModel.getProfileCompletion(userId);
+      const completionData =
+        await CompanyProfileModel.getProfileCompletion(userId);
       return completionData;
     } catch (error) {
       throw new Error(`Failed to get profile completion: ${error.message}`);
@@ -135,16 +196,18 @@ class CompanyProfileService {
   static async getAllProfiles(filters = {}) {
     try {
       const profiles = await CompanyProfileModel.getAllProfiles(filters);
-      
+
       // Add completion percentage to each profile
       const profilesWithCompletion = await Promise.all(
         profiles.map(async (profile) => {
-          const completion = await CompanyProfileModel.getProfileCompletion(profile.userId);
+          const completion = await CompanyProfileModel.getProfileCompletion(
+            profile.userId,
+          );
           return {
             ...profile,
             completion,
           };
-        })
+        }),
       );
 
       return profilesWithCompletion;
@@ -160,17 +223,22 @@ class CompanyProfileService {
         throw new Error("Search term must be at least 2 characters long");
       }
 
-      const profiles = await CompanyProfileModel.searchProfiles(searchTerm.trim(), filters);
-      
+      const profiles = await CompanyProfileModel.searchProfiles(
+        searchTerm.trim(),
+        filters,
+      );
+
       // Add completion percentage to each profile
       const profilesWithCompletion = await Promise.all(
         profiles.map(async (profile) => {
-          const completion = await CompanyProfileModel.getProfileCompletion(profile.userId);
+          const completion = await CompanyProfileModel.getProfileCompletion(
+            profile.userId,
+          );
           return {
             ...profile,
             completion,
           };
-        })
+        }),
       );
 
       return profilesWithCompletion;
@@ -183,49 +251,51 @@ class CompanyProfileService {
   static async getProfileStats(userId) {
     try {
       const profile = await CompanyProfileModel.getProfileByUserId(userId);
-      
+
       if (!profile) {
         throw new Error("Company profile not found");
       }
 
       // Get additional stats from related models
-      const stats = await CompanyProfileModel.prisma.$transaction(async (tx) => {
-        // Use projectsPosted from database (automatically updated when service requests are created)
-        const projectsPosted = profile.projectsPosted ?? 0;
+      const stats = await CompanyProfileModel.prisma.$transaction(
+        async (tx) => {
+          // Use projectsPosted from database (automatically updated when service requests are created)
+          const projectsPosted = profile.projectsPosted ?? 0;
 
-        const activeProjects = await tx.project.count({
-          where: {
-            customerId: userId,
-            status: 'IN_PROGRESS',
-          },
-        });
-
-        const completedProjects = await tx.project.count({
-          where: {
-            customerId: userId,
-            status: 'COMPLETED',
-          },
-        });
-
-        const totalSpend = await tx.payment.aggregate({
-          where: {
-            project: {
+          const activeProjects = await tx.project.count({
+            where: {
               customerId: userId,
+              status: "IN_PROGRESS",
             },
-            status: 'RELEASED',
-          },
-          _sum: {
-            amount: true,
-          },
-        });
+          });
 
-        return {
-          projectsPosted,
-          activeProjects,
-          completedProjects,
-          totalSpend: totalSpend._sum.amount || 0,
-        };
-      });
+          const completedProjects = await tx.project.count({
+            where: {
+              customerId: userId,
+              status: "COMPLETED",
+            },
+          });
+
+          const totalSpend = await tx.payment.aggregate({
+            where: {
+              project: {
+                customerId: userId,
+              },
+              status: "RELEASED",
+            },
+            _sum: {
+              amount: true,
+            },
+          });
+
+          return {
+            projectsPosted,
+            activeProjects,
+            completedProjects,
+            totalSpend: totalSpend._sum.amount || 0,
+          };
+        },
+      );
 
       return {
         ...profile,
@@ -256,26 +326,29 @@ class CompanyProfileService {
   // Get profile by ID (for public viewing)
   static async getPublicProfile(profileId) {
     try {
-      const profile = await CompanyProfileModel.prisma.customerProfile.findUnique({
-        where: { id: profileId },
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              isVerified: true,
-              createdAt: true,
+      const profile =
+        await CompanyProfileModel.prisma.customerProfile.findUnique({
+          where: { id: profileId },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                isVerified: true,
+                createdAt: true,
+              },
             },
           },
-        },
-      });
+        });
 
       if (!profile) {
         throw new Error("Company profile not found");
       }
 
       // Calculate completion percentage
-      const completion = await CompanyProfileModel.getProfileCompletion(profile.userId);
+      const completion = await CompanyProfileModel.getProfileCompletion(
+        profile.userId,
+      );
 
       return {
         ...profile,
@@ -300,7 +373,7 @@ class CompanyProfileService {
   static async getKycDocumentById(documentId) {
     try {
       const document = await CompanyProfileModel.getKycDocumentById(documentId);
-      
+
       if (!document) {
         throw new Error("KYC document not found");
       }
@@ -315,7 +388,7 @@ class CompanyProfileService {
   static async getUserWithKycData(userId) {
     try {
       const user = await CompanyProfileModel.getUserWithKycData(userId);
-      
+
       if (!user) {
         throw new Error("User not found");
       }
@@ -330,14 +403,14 @@ class CompanyProfileService {
   static async getComprehensiveProfile(userId) {
     try {
       const profile = await CompanyProfileModel.getProfileByUserId(userId);
-      
+
       if (!profile) {
         throw new Error("Company profile not found");
       }
 
       // Calculate completion percentage
       const completion = await CompanyProfileModel.getProfileCompletion(userId);
-      
+
       // Get additional stats
       const stats = await this.getProfileStats(userId);
 

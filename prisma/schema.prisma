@@ -66,8 +66,8 @@ model User {
 
   settings Settings?
 
-  // AI Support Chat: one conversation per user
-  supportConversation SupportConversation?
+  // AI Support Chat: user can have multiple conversations (e.g. new session after closed)
+  supportConversations SupportConversation[]
   // Conversation reports (as reporter or reported)
   conversationReportsByReporter ConversationReport[] @relation("ConversationReportsByReporter")
   conversationReportsAgainst     ConversationReport[] @relation("ConversationReportsAgainst")
@@ -131,7 +131,7 @@ model ProviderProfile {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  @@map("users")
+  @@map("ProviderProfile")
 }
 
 enum PayoutMethodType {
@@ -723,7 +723,7 @@ enum SupportConversationStatus {
 model SupportConversation {
   id                  String                    @id @default(uuid()) @db.Uuid
   user                User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId              String                    @unique @db.Uuid
+  userId              String                    @db.Uuid
   status              SupportConversationStatus @default(OPEN)
   handoffRequestedAt  DateTime?                 @map("handoff_requested_at") @db.Timestamptz(6)
   takenOverByAdminId  String?                   @map("taken_over_by_admin_id") @db.Uuid
@@ -732,6 +732,8 @@ model SupportConversation {
 
   messages SupportMessage[]
   adminReads SupportConversationRead[]
+
+  @@index([userId])
   @@map("support_conversations")
 }
 

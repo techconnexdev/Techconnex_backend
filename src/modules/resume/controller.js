@@ -22,8 +22,15 @@ export const analyzeResume = async (req, res) => {
 
 export const uploadResumeController = async (req, res) => {
   try {
-    // Get userId from token (if authenticated) or from request body (for registration)
-    const userId = req.user?.userId || req.user?.id || req.body.userId;
+    // Prefer body userId when: no auth (registration) or token user matches body (same user).
+    // Otherwise use token so an authenticated user cannot assign a resume to another user.
+    const fromToken = req.user?.userId || req.user?.id;
+    const fromBody = req.body.userId;
+    const userId =
+      fromBody && (!fromToken || fromToken === fromBody)
+        ? fromBody
+        : fromToken;
+
     const { key, url } = req.body; // R2 key/URL from frontend
 
     if (!userId || !key) {

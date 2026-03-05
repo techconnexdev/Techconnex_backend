@@ -18,11 +18,15 @@ export async function searchProviders(filters) {
     const result = await findProviders(filters);
 
     // Transform data for frontend
-    const transformedProviders = result.providers.map((user) => ({
+    const transformedProviders = result.providers.map((user) => {
+      const settings = user.settings || {};
+      const allowMessages = settings.allowMessages !== false; // Default to true if not set
+      return {
       profileId: user.providerProfile?.id || null,
       id: user.id,
       name: user.name,
       email: user.email,
+      allowMessages,
       avatar: user.providerProfile?.profileImageUrl || "/placeholder.svg",
       major: user.providerProfile?.major || "ICT Professional",
       company: user.providerProfile?.website || "Freelancer",
@@ -62,7 +66,8 @@ export async function searchProviders(filters) {
           verified: cert.verified,
         })
       ),
-    }));
+    };
+    });
 
     return {
       providers: transformedProviders,
@@ -169,8 +174,8 @@ export async function getProviderPortfolio(providerId) {
     // Transform portfolio items (external work from ProjectPortfolio)
     const portfolio = (provider.providerProfile?.portfolios || []).map(
       (item) => {
-        // Normalize image URL - handle both relative paths and full URLs
-        let coverUrl = "/placeholder.svg";
+        // Normalize image/file URL - handle both relative paths and full URLs (for display and view link)
+        let coverUrl = null;
         if (item.imageUrl) {
           const normalizedUrl = item.imageUrl.replace(/\\/g, "/");
           coverUrl = normalizedUrl.startsWith("http")
@@ -185,8 +190,11 @@ export async function getProviderPortfolio(providerId) {
           title: item.title,
           description: item.description || "",
           cover: coverUrl,
+          imageUrl: coverUrl,
           url: item.externalUrl || "#",
+          externalUrl: item.externalUrl || null,
           tags: item.techStack || [],
+          techStack: item.techStack || [],
           client: item.client || null,
           date: item.date
             ? new Date(item.date).toISOString().split("T")[0]

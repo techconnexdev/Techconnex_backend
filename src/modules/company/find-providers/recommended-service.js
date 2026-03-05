@@ -47,6 +47,43 @@ function setCachedRecommendations(customerId, recommendations) {
 }
 
 /**
+ * Update a provider's mutable fields in the recommendations cache in-place.
+ * AI explanations (aiExplanation) are kept to avoid regenerating them and consuming tokens.
+ * @param {string} providerId - Provider user id
+ * @param {object} updates - Fields to patch (availability, hourlyRate, location, bio, skills, etc.)
+ */
+export function updateProviderInRecommendationsCache(providerId, updates) {
+  if (!providerId || !updates || Object.keys(updates).length === 0) return;
+  const patchableKeys = new Set([
+    "availability",
+    "hourlyRate",
+    "location",
+    "bio",
+    "skills",
+    "yearsExperience",
+    "minimumProjectBudget",
+    "maximumProjectBudget",
+    "preferredProjectDuration",
+    "workPreference",
+    "successRate",
+    "avatar",
+  ]);
+  for (const [, value] of recommendationsCache.entries()) {
+    if (value?.recommendations && Array.isArray(value.recommendations)) {
+      for (const rec of value.recommendations) {
+        if (rec.id === providerId) {
+          for (const [key, val] of Object.entries(updates)) {
+            if (patchableKeys.has(key) && val !== undefined) {
+              rec[key] = val;
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
  * Generate AI explanation for why a provider is recommended
  */
 async function generateAIExplanation(
@@ -333,6 +370,8 @@ export async function getRecommendedProviders(customerId, serviceRequestId) {
       topMatches.map(
         async ({ provider, providerProfile, serviceRequest, matchScore }) => {
           const isVerified = provider.isVerified || false;
+          const settings = provider.settings || {};
+          const allowMessages = settings.allowMessages !== false;
           const explanation = await generateAIExplanation(
             providerProfile,
             serviceRequest,
@@ -345,6 +384,7 @@ export async function getRecommendedProviders(customerId, serviceRequestId) {
             id: provider.id,
             name: provider.name,
             email: provider.email,
+            allowMessages,
             avatar: providerProfile.profileImageUrl || null,
             major: providerProfile.major || "ICT Professional",
             rating: parseFloat(providerProfile.rating || 0),

@@ -46,7 +46,11 @@ function setCachedRecommendations(providerId, recommendations) {
 /**
  * Generate AI explanation for why an opportunity is recommended
  */
-async function generateAIExplanation(providerProfile, serviceRequest, matchScore) {
+async function generateAIExplanation(
+  providerProfile,
+  serviceRequest,
+  matchScore,
+) {
   try {
     const model = new ChatOpenAI({
       modelName: "gpt-4o",
@@ -100,22 +104,28 @@ Format: Use bullet points (•) separated by newlines. Return ONLY the bullet po
 `);
 
     const chain = RunnableSequence.from([prompt, model]);
-    
+
     const result = await chain.invoke({
-      providerSkills: (providerProfile.skills || []).join(", ") || "Not specified",
+      providerSkills:
+        (providerProfile.skills || []).join(", ") || "Not specified",
       providerMajor: providerProfile.major || "Not specified",
-      yearsExperience: providerProfile.yearsExperience?.toString() || "Not specified",
+      yearsExperience:
+        providerProfile.yearsExperience?.toString() || "Not specified",
       hourlyRate: providerProfile.hourlyRate?.toString() || "Not specified",
       availability: providerProfile.availability || "Not specified",
       location: providerProfile.location || "Not specified",
-      preferredDuration: providerProfile.preferredProjectDuration || "Not specified",
+      preferredDuration:
+        providerProfile.preferredProjectDuration || "Not specified",
       workPreference: providerProfile.workPreference || "Not specified",
-      minBudget: providerProfile.minimumProjectBudget?.toString() || "Not specified",
-      maxBudget: providerProfile.maximumProjectBudget?.toString() || "Not specified",
+      minBudget:
+        providerProfile.minimumProjectBudget?.toString() || "Not specified",
+      maxBudget:
+        providerProfile.maximumProjectBudget?.toString() || "Not specified",
       requestTitle: serviceRequest.title,
       requestDescription: serviceRequest.description || "No description",
       requestCategory: serviceRequest.category || "Not specified",
-      requestSkills: (serviceRequest.skills || []).join(", ") || "Not specified",
+      requestSkills:
+        (serviceRequest.skills || []).join(", ") || "Not specified",
       budgetMin: serviceRequest.budgetMin?.toString() || "0",
       budgetMax: serviceRequest.budgetMax?.toString() || "0",
       timeline: serviceRequest.timeline || "Not specified",
@@ -124,7 +134,7 @@ Format: Use bullet points (•) separated by newlines. Return ONLY the bullet po
     });
 
     let content = result.content?.trim() || "";
-    
+
     // Clean up any markdown or code fences
     if (content.startsWith("```")) {
       content = content.replace(/```[\w]*/g, "").trim();
@@ -132,7 +142,7 @@ Format: Use bullet points (•) separated by newlines. Return ONLY the bullet po
     if (content.startsWith('"') && content.endsWith('"')) {
       content = content.slice(1, -1);
     }
-    
+
     // Ensure bullet points are properly formatted
     // Replace various bullet point formats with consistent • format
     content = content
@@ -183,6 +193,20 @@ export async function getRecommendedOpportunities(providerId) {
       throw new Error("Provider profile not found");
     }
 
+    // Do not compute match scores or AI insights when provider has no skills
+    const providerSkills = providerProfile.skills || [];
+    if (!Array.isArray(providerSkills) || providerSkills.length === 0) {
+      const cachedAt = Date.now();
+      const nextRefreshAt = cachedAt + CACHE_DURATION_MS;
+      return {
+        recommendations: [],
+        cachedAt,
+        nextRefreshAt,
+        isCached: false,
+        requiresSkills: true,
+      };
+    }
+
     // Get all open service requests (excluding ones from the same provider)
     const allServiceRequests = await prisma.serviceRequest.findMany({
       where: {
@@ -220,7 +244,7 @@ export async function getRecommendedOpportunities(providerId) {
     });
 
     // Check which service requests the provider has already proposed to
-    const serviceRequestIds = allServiceRequests.map(sr => sr.id);
+    const serviceRequestIds = allServiceRequests.map((sr) => sr.id);
     const existingProposals = await prisma.proposal.findMany({
       where: {
         providerId: providerId,
@@ -233,12 +257,14 @@ export async function getRecommendedOpportunities(providerId) {
       },
     });
 
-    const proposedServiceRequestIds = new Set(existingProposals.map(p => p.serviceRequestId));
+    const proposedServiceRequestIds = new Set(
+      existingProposals.map((p) => p.serviceRequestId),
+    );
 
     // Filter out already proposed requests and calculate match scores
     const scoredRequests = allServiceRequests
-      .filter(sr => !proposedServiceRequestIds.has(sr.id))
-      .map(sr => ({
+      .filter((sr) => !proposedServiceRequestIds.has(sr.id))
+      .map((sr) => ({
         serviceRequest: sr,
         matchScore: calculateMatchScore(providerProfile, sr),
       }))
@@ -251,7 +277,7 @@ export async function getRecommendedOpportunities(providerId) {
         const explanation = await generateAIExplanation(
           providerProfile,
           serviceRequest,
-          matchScore
+          matchScore,
         );
 
         return {
@@ -271,7 +297,7 @@ export async function getRecommendedOpportunities(providerId) {
           matchScore,
           aiExplanation: explanation,
         };
-      })
+      }),
     );
 
     // Cache the recommendations
@@ -290,4 +316,3 @@ export async function getRecommendedOpportunities(providerId) {
     throw new Error("Failed to fetch recommended opportunities");
   }
 }
-

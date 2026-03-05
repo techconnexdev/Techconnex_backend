@@ -145,6 +145,33 @@ class CompanyProfileModel {
     }
   }
 
+  /** Update user phone only when not already set (allows adding phone from customer profile edit). */
+  static async updateUserPhoneIfEmpty(userId, phone) {
+    const trimmed =
+      phone != null && String(phone).trim() !== "" ? String(phone).trim() : null;
+    if (!trimmed) return null;
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { phone: true },
+    });
+    if (user?.phone && String(user.phone).trim() !== "") return null;
+    return prisma.user.update({
+      where: { id: userId },
+      data: { phone: trimmed },
+    });
+  }
+
+  /** Update user name (company name for customers). */
+  static async updateUserName(userId, name) {
+    const trimmed =
+      name != null && String(name).trim() !== "" ? String(name).trim() : null;
+    if (!trimmed) return null;
+    return prisma.user.update({
+      where: { id: userId },
+      data: { name: trimmed },
+    });
+  }
+
   // Check if profile exists
   static async profileExists(userId) {
     try {
@@ -330,8 +357,9 @@ class CompanyProfileModel {
 
       let totalScore = 0;
       const suggestions = [];
+      const checklist = [];
 
-      // Calculate score and collect suggestions
+      // Calculate score and collect suggestions + checklist
       for (const [field, config] of Object.entries(fieldWeights)) {
         const { weight, label, value, minLength, minCount, isCount } = config;
         let isComplete = false;
@@ -402,7 +430,7 @@ class CompanyProfileModel {
           if (!isComplete) {
             suggestionMessage = `Add your ${label.toLowerCase()}`;
           }
-          } else {
+        } else {
           isComplete = value !== null && value !== undefined;
           if (!isComplete) {
             suggestionMessage = `Add your ${label.toLowerCase()}`;
@@ -413,8 +441,9 @@ class CompanyProfileModel {
           totalScore += weight;
         } else if (suggestionMessage) {
           suggestions.push(suggestionMessage);
-          }
         }
+        checklist.push({ key: field, label: config.label, done: isComplete });
+      }
 
       // Sort suggestions by priority (missing core fields first)
       const priorityOrder = [
@@ -444,10 +473,10 @@ class CompanyProfileModel {
 
       suggestions.sort((a, b) => {
         const aPriority = priorityOrder.findIndex((p) =>
-          a.toLowerCase().includes(p)
+          a.toLowerCase().includes(p),
         );
         const bPriority = priorityOrder.findIndex((p) =>
-          b.toLowerCase().includes(p)
+          b.toLowerCase().includes(p),
         );
         if (aPriority === -1 && bPriority === -1) return 0;
         if (aPriority === -1) return 1;
@@ -461,13 +490,14 @@ class CompanyProfileModel {
       return {
         completion: Math.min(100, Math.round(totalScore)),
         suggestions: topSuggestions,
+        checklist,
         totalFields: Object.keys(fieldWeights).length,
         completedFields:
           Object.keys(fieldWeights).length - topSuggestions.length,
       };
     } catch (error) {
       throw new Error(
-        `Failed to calculate profile completion: ${error.message}`
+        `Failed to calculate profile completion: ${error.message}`,
       );
     }
   }
@@ -476,7 +506,7 @@ class CompanyProfileModel {
   static async updateProfileCompletion(userId) {
     try {
       const completionData = await this.getProfileCompletion(userId);
-      
+
       await prisma.customerProfile.update({
         where: { userId },
         data: { completion: completionData.completion },

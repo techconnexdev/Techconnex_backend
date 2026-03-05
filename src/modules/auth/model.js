@@ -22,4 +22,11 @@ async function findProviderProfile(userId) {
   return prisma.providerProfile.findUnique({ where: { userId } });
 }
 
-export { findUserByEmail, findUserById, findProviderProfile };
+async function updateUserPassword(userId, hashedPassword) {
+  return prisma.user.update({
+    where: { id: userId },
+    data: { password: hashedPassword },
+  });
+}
+
+export { findUserByEmail, findUserById, findProviderProfile, updateUserPassword };

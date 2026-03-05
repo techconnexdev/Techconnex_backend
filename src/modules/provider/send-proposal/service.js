@@ -50,6 +50,11 @@ export async function sendProposal(dto) {
       throw new Error("Bid amount must be within the specified budget range");
     }
 
+    // Normalize attachment URLs (ensure array of strings for Prisma)
+    const attachmentUrls = Array.isArray(dto.attachmentUrls)
+      ? dto.attachmentUrls.filter((s) => s != null && String(s).trim() !== "")
+      : [];
+
     // Create the proposal with milestones in a transaction
     const proposal = await prisma.$transaction(async (tx) => {
       // Create the proposal
@@ -60,7 +65,7 @@ export async function sendProposal(dto) {
           bidAmount: dto.bidAmount,
           deliveryTime: dto.deliveryTime,
           coverLetter: dto.coverLetter,
-          attachmentUrls: dto.attachmentUrls,
+          attachmentUrls,
           status: "PENDING",
         },
       });

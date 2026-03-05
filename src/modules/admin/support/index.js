@@ -9,6 +9,7 @@ import {
   listReferences,
   uploadReference,
   reindexReference,
+  deleteReference,
 } from "./controller.js";
 
 const router = express.Router();
@@ -24,5 +25,6 @@ router.patch("/conversations/:id", updateConversation);
 router.get("/references", listReferences);
 router.post("/references/upload", upload.single("file"), uploadReference);
 router.post("/references/:id/reindex", reindexReference);
+router.delete("/references/:id", deleteReference);
 
 export default router;

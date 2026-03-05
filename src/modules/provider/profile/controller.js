@@ -1,5 +1,6 @@
 import ProviderProfileService from "./service.js";
 import { ProviderProfileDto } from "./dto.js";
+import { upsertProviderAiDraftByUserId } from "../../auth/provider/provider-ai-draft.js";
 
 class ProviderProfileController {
   // GET /api/provider/profile - Get provider profile
@@ -71,9 +72,16 @@ class ProviderProfileController {
     try {
       const userId = req.user.userId;
       const profileData = req.body;
-      
+
       const profile = await ProviderProfileService.upsertProfile(userId, profileData);
-      
+
+      // Generate or overwrite AI summary for this provider (one draft per provider; re-submit overwrites)
+      try {
+        await upsertProviderAiDraftByUserId(userId);
+      } catch (aiErr) {
+        console.error("Provider AI draft generation failed (profile still saved):", aiErr);
+      }
+
       res.json({
         success: true,
         message: "Provider profile saved successfully",

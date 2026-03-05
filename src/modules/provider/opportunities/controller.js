@@ -99,6 +99,7 @@ export async function getRecommendedOpportunitiesController(req, res) {
       cachedAt: result.cachedAt,
       nextRefreshAt: result.nextRefreshAt,
       isCached: result.isCached,
+      ...(result.requiresSkills && { requiresSkills: true }),
     });
   } catch (error) {
     console.error("Error in getRecommendedOpportunitiesController:", error);

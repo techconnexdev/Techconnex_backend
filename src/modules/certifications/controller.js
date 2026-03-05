@@ -113,6 +113,14 @@ async function createCertification(req, res) {
       });
     }
 
+    const issuedDateObj = new Date(issuedDate);
+    if (Number.isNaN(issuedDateObj.getTime())) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Please provide a valid issue date (e.g. YYYY-MM-DD)." 
+      });
+    }
+
     // Check if user exists and has provider profile
     const user = await prisma.user.findUnique({ 
       where: { id: userId },
@@ -132,7 +140,7 @@ async function createCertification(req, res) {
         profileId: user.providerProfile.id,
         name: name.trim(),
         issuer: issuer.trim(),
-        issuedDate: new Date(issuedDate),
+        issuedDate: issuedDateObj,
         serialNumber: serialNumber?.trim() || null,
         sourceUrl: sourceUrl?.trim() || null,
         verified: false,
@@ -146,9 +154,17 @@ async function createCertification(req, res) {
     });
   } catch (error) {
     console.error("Create certification error:", error);
+    const msg = error.message || "";
+    const isInvalidDate = /invalid.*date|expected date/i.test(msg);
+    if (isInvalidDate) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Please provide a valid issue date (e.g. YYYY-MM-DD)." 
+      });
+    }
     res.status(500).json({ 
       success: false, 
-      message: error.message || "Internal server error" 
+      message: "Failed to save certification. Please try again." 
     });
   }
 }
@@ -172,6 +188,14 @@ async function updateCertification(req, res) {
       return res.status(400).json({ 
         success: false, 
         message: "At least one of serial number or verification link is required" 
+      });
+    }
+
+    const issuedDateObj = new Date(issuedDate);
+    if (Number.isNaN(issuedDateObj.getTime())) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Please provide a valid issue date (e.g. YYYY-MM-DD)." 
       });
     }
 
@@ -213,7 +237,7 @@ async function updateCertification(req, res) {
       data: {
         name: name.trim(),
         issuer: issuer.trim(),
-        issuedDate: new Date(issuedDate),
+        issuedDate: issuedDateObj,
         serialNumber: serialNumber?.trim() || null,
         sourceUrl: sourceUrl?.trim() || null,
       },
@@ -226,9 +250,17 @@ async function updateCertification(req, res) {
     });
   } catch (error) {
     console.error("Update certification error:", error);
+    const msg = error.message || "";
+    const isInvalidDate = /invalid.*date|expected date/i.test(msg);
+    if (isInvalidDate) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Please provide a valid issue date (e.g. YYYY-MM-DD)." 
+      });
+    }
     res.status(500).json({ 
       success: false, 
-      message: error.message || "Internal server error" 
+      message: "Failed to update certification. Please try again." 
     });
   }
 }

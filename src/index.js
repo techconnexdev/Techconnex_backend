@@ -1,9 +1,11 @@
 import "dotenv/config";
+// Sentry loaded via node --import ./instrument.js (must run before Express)
 import http from "http";
 import { Server } from "socket.io";
 import server from "./server.js";
 import { authenticateSocket } from "./middlewares/auth.js";
 import { sendMessage, readMessage } from "./modules/messages/service.js";
+import { setIo } from "./io.js";
 
 const httpServer = http.createServer(server);
 const io = new Server(httpServer, {
@@ -13,6 +15,9 @@ const io = new Server(httpServer, {
     credentials: true,
   },
 });
+
+// Make io available to REST controllers (support chat, etc.)
+setIo(io);
 
 // Socket middleware for authentication
 io.use(authenticateSocket);
@@ -64,7 +69,7 @@ io.on("connection", (socket) => {
           attachments: attachments || [],
           ...(projectId != null ? { projectId } : {}),
         },
-        socket.user.userId
+        socket.user.userId,
       );
 
       console.log("✅ Message saved to DB with ID:", newMessage.id);
@@ -89,6 +94,14 @@ io.on("connection", (socket) => {
       // Also send error to client via socket
       socket.emit("message_error", { error: error.message });
     }
+  });
+
+  // Support chat: admin joins conversation room when viewing
+  socket.on("support:join_conversation", ({ conversationId }) => {
+    if (conversationId) socket.join(`support:conv:${conversationId}`);
+  });
+  socket.on("support:leave_conversation", ({ conversationId }) => {
+    if (conversationId) socket.leave(`support:conv:${conversationId}`);
   });
 
   socket.on("mark_as_read", async (data) => {

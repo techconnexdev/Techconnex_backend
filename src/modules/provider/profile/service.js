@@ -1,6 +1,7 @@
 
 import ProviderProfileModel from "./model.js";
 import { ProviderProfileDto, ProviderProfileResponseDto } from "./dto.js";
+import { updateProviderInRecommendationsCache } from "../../company/find-providers/recommended-service.js";
 
 class ProviderProfileService {
   // Get provider profile by user ID
@@ -69,6 +70,9 @@ class ProviderProfileService {
         const profile = await ProviderProfileModel.updateProfile(userId, {
           profileImageUrl: profileData.profileImageUrl,
         });
+        updateProviderInRecommendationsCache(userId, {
+          avatar: profile.profileImageUrl,
+        });
         return {
           ...profile,
           completion: await ProviderProfileModel.getProfileCompletion(userId),
@@ -81,6 +85,22 @@ class ProviderProfileService {
 
       // Update profile
       const profile = await ProviderProfileModel.updateProfile(userId, dto.toUpdateData());
+
+      // Patch provider in recommendations cache (keeps AI explanations, updates mutable fields)
+      updateProviderInRecommendationsCache(userId, {
+        availability: profile.availability,
+        hourlyRate: profile.hourlyRate,
+        location: profile.location,
+        bio: profile.bio,
+        skills: profile.skills,
+        yearsExperience: profile.yearsExperience,
+        minimumProjectBudget: profile.minimumProjectBudget,
+        maximumProjectBudget: profile.maximumProjectBudget,
+        preferredProjectDuration: profile.preferredProjectDuration,
+        workPreference: profile.workPreference,
+        successRate: profile.successRate,
+        avatar: profile.profileImageUrl,
+      });
 
       // Update completion percentage
       const completion = await ProviderProfileModel.updateProfileCompletion(userId);
@@ -97,15 +117,39 @@ class ProviderProfileService {
   // Upsert provider profile (create or update)
   static async upsertProfile(userId, profileData) {
     try {
-      // Extract portfolioUrls if present (not stored in ProviderProfile directly)
-      const { portfolioUrls, ...restProfileData } = profileData;
-      
+      // Extract portfolioUrls and phone (phone is on User, not ProviderProfile)
+      const { portfolioUrls, phone, ...restProfileData } = profileData;
+
       // Validate input data (partial validation for upsert)
       const dto = new ProviderProfileDto(restProfileData);
       dto.validatePartial();
 
       // Upsert profile (portfolioUrls is handled separately via portfolios relation if needed)
       const profile = await ProviderProfileModel.upsertProfile(userId, dto.toUpdateData());
+
+      // If phone provided and user has no phone yet, set it (edit profile can add phone once)
+      if (phone != null && String(phone).trim() !== "") {
+        const updatedUser = await ProviderProfileModel.updateUserPhoneIfEmpty(userId, phone);
+        if (updatedUser && profile.user) {
+          profile.user = { ...profile.user, phone: updatedUser.phone };
+        }
+      }
+
+      // Patch provider in recommendations cache (keeps AI explanations, updates mutable fields)
+      updateProviderInRecommendationsCache(userId, {
+        availability: profile.availability,
+        hourlyRate: profile.hourlyRate,
+        location: profile.location,
+        bio: profile.bio,
+        skills: profile.skills,
+        yearsExperience: profile.yearsExperience,
+        minimumProjectBudget: profile.minimumProjectBudget,
+        maximumProjectBudget: profile.maximumProjectBudget,
+        preferredProjectDuration: profile.preferredProjectDuration,
+        workPreference: profile.workPreference,
+        successRate: profile.successRate,
+        avatar: profile.profileImageUrl,
+      });
 
       // Update completion percentage
       const completion = await ProviderProfileModel.updateProfileCompletion(userId);

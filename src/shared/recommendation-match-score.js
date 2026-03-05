@@ -13,20 +13,25 @@
  * @returns {number} Score 0-100
  */
 export function calculateMatchScore(providerProfile, serviceRequest) {
+  // No meaningful match without provider skills — do not show score or use for ranking
+  const providerSkills = (providerProfile.skills || []).map((s) =>
+    String(s).toLowerCase().trim(),
+  ).filter(Boolean);
+  if (providerSkills.length === 0) {
+    return null;
+  }
+
   let score = 0;
   const maxScore = 100;
 
-  // Skills overlap (40% weight)
-  const providerSkills = (providerProfile.skills || []).map((s) =>
-    String(s).toLowerCase()
-  );
   const requestSkills = (serviceRequest.skills || []).map((s) =>
-    String(s).toLowerCase()
+    String(s).toLowerCase(),
   );
 
+  // Skills overlap (40% weight)
   if (requestSkills.length > 0) {
     const matchingSkills = requestSkills.filter((skill) =>
-      providerSkills.some((ps) => ps.includes(skill) || skill.includes(ps))
+      providerSkills.some((ps) => ps.includes(skill) || skill.includes(ps)),
     );
     const skillsScore = (matchingSkills.length / requestSkills.length) * 40;
     score += skillsScore;
@@ -59,7 +64,7 @@ export function calculateMatchScore(providerProfile, serviceRequest) {
       for (const [, keywords] of Object.entries(categoryKeywords)) {
         if (
           keywords.some(
-            (k) => providerMajor.includes(k) || requestCategory.includes(k)
+            (k) => providerMajor.includes(k) || requestCategory.includes(k),
           )
         ) {
           score += 10; // Partial match
@@ -80,7 +85,8 @@ export function calculateMatchScore(providerProfile, serviceRequest) {
   const requestBudgetMin = Number(serviceRequest.budgetMin) || 0;
   const requestBudgetMax = Number(serviceRequest.budgetMax) || Infinity;
   const providerMinBudget = Number(providerProfile.minimumProjectBudget) || 0;
-  const providerMaxBudget = Number(providerProfile.maximumProjectBudget) || Infinity;
+  const providerMaxBudget =
+    Number(providerProfile.maximumProjectBudget) || Infinity;
   const providerHourlyRate = Number(providerProfile.hourlyRate) || 0;
 
   if (
@@ -106,7 +112,7 @@ export function calculateMatchScore(providerProfile, serviceRequest) {
     const availability = String(providerProfile.availability).toLowerCase();
     const urgentKeywords = ["urgent", "asap", "immediate", "quick", "fast"];
     const isUrgent = urgentKeywords.some((keyword) =>
-      timeline.includes(keyword)
+      timeline.includes(keyword),
     );
 
     if (

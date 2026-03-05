@@ -114,9 +114,31 @@ export async function getProjectRequests(dto) {
     ]);
 
     let resultProposals = proposals;
-    if (dto.serviceRequestId && proposals.length > 0) {
-      const serviceRequest = proposals[0].serviceRequest || null;
-      resultProposals = rankProposals(proposals, serviceRequest);
+    if (proposals.length > 0) {
+      if (dto.serviceRequestId) {
+        const serviceRequest = proposals[0].serviceRequest || null;
+        resultProposals = rankProposals(proposals, serviceRequest);
+      } else {
+        // Attach matchScore for each proposal by grouping by service request and ranking
+        const scoreMap = new Map(); // proposalId -> { matchScore, rank, isTopFive }
+        const byServiceRequest = new Map();
+        for (const p of proposals) {
+          const srId = p.serviceRequestId;
+          if (!byServiceRequest.has(srId)) byServiceRequest.set(srId, []);
+          byServiceRequest.get(srId).push(p);
+        }
+        for (const [, group] of byServiceRequest) {
+          const sr = group[0]?.serviceRequest || null;
+          const ranked = rankProposals(group, sr);
+          for (const r of ranked) {
+            scoreMap.set(r.id, { matchScore: r.matchScore, rank: r.rank, isTopFive: r.isTopFive });
+          }
+        }
+        resultProposals = proposals.map((p) => {
+          const att = scoreMap.get(p.id);
+          return att ? { ...p, matchScore: att.matchScore, rank: att.rank, isTopFive: att.isTopFive } : p;
+        });
+      }
     }
 
     const totalPages = dto.serviceRequestId ? 1 : Math.ceil(total / dto.limit);

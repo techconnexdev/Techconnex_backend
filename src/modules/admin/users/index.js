@@ -19,6 +19,9 @@ router.get("/export", userController.exportUsers);
 // Create new user
 router.post("/", userController.createUser);
 
+// Send notification to all users (announcements)
+router.post("/notifications/broadcast", userController.broadcastNotification);
+
 // Get user by ID
 router.get("/:id", userController.getUserById);
 
