@@ -39,6 +39,7 @@ import paymentRouter from "../modules/payment/index.js";
 import KycRouter from "../modules/kyc/index.js";
 import notificationsRoutes from "../modules/notifications/index.js";
 import uploadsRouter from "../modules/uploads/index.js";
+import publicHomepageRouter from "../modules/public-homepage/index.js";
 import { authenticateToken } from "../middlewares/auth.js";
 // import providerCertificateRouter from "../modules/certifications/index.js";
 
@@ -108,6 +109,9 @@ router.use("/payments", paymentRouter);
 router.use("/kyc", KycRouter);
 router.use("/notifications", notificationsRoutes);
 router.use("/uploads", uploadsRouter);
+
+// Public homepage data (no auth) — top freelancers, companies, latest jobs
+router.use("/public/homepage", publicHomepageRouter);
 
 // Mount check-email under /api so frontend using NEXT_PUBLIC_API_URL that
 // points to http://host:PORT/api will be able to call `${API_BASE}/check-email`

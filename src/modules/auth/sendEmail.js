@@ -1,41 +1,34 @@
 /**
- * Send an email. If nodemailer is installed and SMTP is configured (MAIL_HOST, MAIL_USER, MAIL_PASS),
- * sends real email. Otherwise logs to console for development.
+ * Send an email via Resend. If RESEND_API_KEY is set, sends real email.
+ * Otherwise logs to console for development.
  */
-async function sendEmail({ to, subject, text }) {
-  const useSmtp =
-    process.env.MAIL_HOST &&
-    process.env.MAIL_USER &&
-    process.env.MAIL_PASS;
+import { Resend } from "resend";
 
-  if (useSmtp) {
-    try {
-      const nodemailer = await import("nodemailer");
-      const transporter = nodemailer.default.createTransport({
-        host: process.env.MAIL_HOST,
-        port: Number(process.env.MAIL_PORT) || 587,
-        secure: process.env.MAIL_SECURE === "true",
-        auth: {
-          user: process.env.MAIL_USER,
-          pass: process.env.MAIL_PASS,
-        },
-      });
-      await transporter.sendMail({
-        from: process.env.MAIL_FROM || process.env.MAIL_USER,
-        to,
-        subject,
-        text,
-      });
-      return;
-    } catch (err) {
-      console.error("Send email error:", err);
-      throw err;
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+async function sendEmail({ to, subject, text, html }) {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.MAIL_FROM || process.env.RESEND_FROM || "TechConnex <onboarding@resend.dev>";
+
+  if (apiKey) {
+    const toList = Array.isArray(to) ? to : [to];
+    const { data, error } = await resend.emails.send({
+      from,
+      to: toList,
+      subject,
+      ...(html ? { html } : { text: text || "" }),
+    });
+
+    if (error) {
+      console.error("Send email error:", error);
+      throw error;
     }
+    return data;
   }
 
-  // No SMTP: log to console (development)
-  console.log("📧 [Email OTP - no SMTP configured] To:", to, "| Subject:", subject);
-  console.log("   OTP / body:", text);
+  // No API key: log to console (development)
+  console.log("📧 [Email - no RESEND_API_KEY configured] To:", to, "| Subject:", subject);
+  console.log("   Body:", text || "(html only)");
 }
 
 export { sendEmail };
