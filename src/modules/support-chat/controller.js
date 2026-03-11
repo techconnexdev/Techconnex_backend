@@ -1,5 +1,6 @@
 import * as service from "./service.js";
 import { emitSupportUpdate } from "../../io.js";
+import { FRIENDLY_500_MESSAGE } from "../../utils/errors.js";
 
 const userId = (req) => req.user?.id || req.user?.userId;
 
@@ -33,7 +34,7 @@ export async function getConversation(req, res) {
     return res.json({ success: true, data: conversationToPayload(conversation) });
   } catch (err) {
     console.error("Support chat getConversation:", err);
-    return res.status(500).json({ success: false, message: err.message || "Internal server error" });
+    return res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 }
 
@@ -51,7 +52,7 @@ export async function getMySessions(req, res) {
     return res.json({ success: true, data: list });
   } catch (err) {
     console.error("Support chat getMySessions:", err);
-    return res.status(500).json({ success: false, message: err.message || "Internal server error" });
+    return res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 }
 
@@ -70,7 +71,7 @@ export async function getSessionById(req, res) {
     return res.json({ success: true, data: conversationToPayload(conversation) });
   } catch (err) {
     console.error("Support chat getSessionById:", err);
-    return res.status(500).json({ success: false, message: err.message || "Internal server error" });
+    return res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 }
 
@@ -86,7 +87,7 @@ export async function startNewConversation(req, res) {
     return res.json({ success: true, data: conversationToPayload(conversation) });
   } catch (err) {
     console.error("Support chat startNewConversation:", err);
-    return res.status(500).json({ success: false, message: err.message || "Internal server error" });
+    return res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 }
 
@@ -166,6 +167,6 @@ export async function sendMessage(req, res) {
       });
     }
     console.error("Support chat sendMessage:", err);
-    return res.status(500).json({ success: false, message: err.message || "Internal server error" });
+    return res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 }

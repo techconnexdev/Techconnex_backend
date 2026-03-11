@@ -88,6 +88,7 @@ export const userController = {
         data: user,
       });
     } catch (error) {
+      console.error("[admin/users updateUser]", error.message, error);
       res.status(400).json({
         success: false,
         error: error.message,

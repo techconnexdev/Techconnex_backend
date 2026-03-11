@@ -1,5 +1,6 @@
 // controllers/webhook.controller.js
 import Stripe from "stripe";
+import { FRIENDLY_500_MESSAGE } from "../../utils/errors.js";
 import { confirmPaymentSuccess } from "./service.js";
 import { PrismaClient } from "@prisma/client";
 
@@ -56,7 +57,7 @@ export async function handleStripeWebhook(req, res) {
     res.json({ received: true });
   } catch (error) {
     console.error("Webhook handler error:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: FRIENDLY_500_MESSAGE });
   }
 }
 

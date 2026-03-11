@@ -1,4 +1,5 @@
 // controller.js
+import { FRIENDLY_500_MESSAGE } from "../../../utils/errors.js";
 import { generateReceiptPDF } from "../../../utils/receiptPdf.js";
 import { createProviderEarningsPDF } from "../../../utils/providerEarningsReportPdf.js";
 import {
@@ -35,7 +36,7 @@ export const getProviderBillingController = async (req, res) => {
     res.json({ success: true, ...data });
   } catch (err) {
     console.error("Billing Error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 };
 
@@ -52,7 +53,7 @@ export const getEarningsOverviewController = async (req, res) => {
     console.error("getEarningsOverviewController error:", err);
     return res
       .status(500)
-      .json({ error: "Server error", details: err.message });
+      .json({ error: FRIENDLY_500_MESSAGE });
   }
 };
 

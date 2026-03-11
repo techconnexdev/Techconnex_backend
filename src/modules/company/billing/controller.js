@@ -1,4 +1,5 @@
 // src/modules/company/billing/controller.js
+import { FRIENDLY_500_MESSAGE } from "../../../utils/errors.js";
 import { createAnalyticsPDF } from "../../../utils/billingReportPdf.js";
 import { generateReceiptPDF } from "../../../utils/receiptPdf.js";
 import {
@@ -24,7 +25,7 @@ async function getOverview(req, res) {
     res.json({ success: true, data });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 }
 
@@ -34,7 +35,7 @@ async function getTransactions(req, res) {
     const transactions = await getTransactionsList(userId);
     res.json({ success: true, transactions });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 }
 
@@ -44,7 +45,7 @@ async function getInvoices(req, res) {
     const invoices = await getInvoicesList(userId);
     res.json({ success: true, invoices });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 }
 

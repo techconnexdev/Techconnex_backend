@@ -8,7 +8,7 @@ import { sendEmail } from "./sendEmail.js";
 
 async function loginProvider({ email, password }) {
   const user = await findUserByEmail(email);
-  if (!user) throw new Error("Invalid credentials");
+  if (!user) throw new Error("Your email or password is incorrect. Try again.");
 
   // ⚠️ Check if account is deleted
   if (user.settings && user.settings.deletedAt) {
@@ -23,7 +23,7 @@ async function loginProvider({ email, password }) {
 
   // ✅ Verify password
   const isPasswordValid = await bcrypt.compare(password, user.password);
-  if (!isPasswordValid) throw new Error("Invalid credentials");
+  if (!isPasswordValid) throw new Error("Your email or password is incorrect. Try again.");
 
   // ✅ Generate token
   const token = jwt.sign(

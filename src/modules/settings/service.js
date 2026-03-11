@@ -24,6 +24,7 @@ export const updateNotifications = async (userId, data) => {
     data: {
       emailNotifications: data.emailNotifications,
       smsNotifications: data.smsNotifications,
+      pushNotifications: data.pushNotifications,
       projectUpdates: data.projectUpdates,
       marketingEmails: data.marketingEmails,
       weeklyReports: data.weeklyReports,

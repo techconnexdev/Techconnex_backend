@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { uploadFileToR2, getPublicUrl, downloadFileFromR2, deleteFileFromR2 } from "../../../utils/r2.js";
+import { FRIENDLY_500_MESSAGE } from "../../../utils/errors.js";
 import { indexDocument } from "../../support-chat/rag-service.js";
 import { emitSupportUpdate } from "../../../io.js";
 
@@ -85,7 +86,7 @@ export async function listConversations(req, res) {
     return res.json({ success: true, data });
   } catch (err) {
     console.error("Admin support listConversations:", err);
-    return res.status(500).json({ success: false, message: err.message || "Internal server error" });
+    return res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 }
 
@@ -137,7 +138,7 @@ export async function getConversation(req, res) {
     });
   } catch (err) {
     console.error("Admin support getConversation:", err);
-    return res.status(500).json({ success: false, message: err.message || "Internal server error" });
+    return res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 }
 
@@ -218,7 +219,7 @@ export async function sendAdminMessage(req, res) {
     });
   } catch (err) {
     console.error("Admin support sendAdminMessage:", err);
-    return res.status(500).json({ success: false, message: err.message || "Internal server error" });
+    return res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 }
 
@@ -242,7 +243,7 @@ export async function updateConversation(req, res) {
     return res.json({ success: true, data: conv });
   } catch (err) {
     console.error("Admin support updateConversation:", err);
-    return res.status(500).json({ success: false, message: err.message || "Internal server error" });
+    return res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 }
 
@@ -268,7 +269,7 @@ export async function listReferences(req, res) {
     return res.json({ success: true, data });
   } catch (err) {
     console.error("Admin support listReferences:", err);
-    return res.status(500).json({ success: false, message: err.message || "Internal server error" });
+    return res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 }
 
@@ -317,7 +318,7 @@ export async function uploadReference(req, res) {
     });
   } catch (err) {
     console.error("Admin support uploadReference:", err);
-    return res.status(500).json({ success: false, message: err.message || "Internal server error" });
+    return res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 }
 
@@ -344,7 +345,7 @@ export async function reindexReference(req, res) {
     });
   } catch (err) {
     console.error("Admin support reindexReference:", err);
-    return res.status(500).json({ success: false, message: err.message || "Internal server error" });
+    return res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 }
 
@@ -370,6 +371,6 @@ export async function deleteReference(req, res) {
     return res.json({ success: true, message: "Reference document deleted" });
   } catch (err) {
     console.error("Admin support deleteReference:", err);
-    return res.status(500).json({ success: false, message: err.message || "Internal server error" });
+    return res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 }

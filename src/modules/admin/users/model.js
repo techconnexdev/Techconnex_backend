@@ -2,6 +2,98 @@ import { PrismaClient, Prisma } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
+/** Coerce value to number or null. */
+function toNumberOrNull(v) {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Coerce value to integer or null for Prisma Int. */
+function toIntOrNull(v) {
+  if (v == null || v === "") return null;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Ensure array of strings. */
+function toStringArray(v) {
+  if (!Array.isArray(v)) return [];
+  return v.map((item) => (item != null ? String(item) : "")).filter(Boolean);
+}
+
+/** Remove undefined keys so Prisma update only receives defined values. */
+function omitUndefined(obj) {
+  if (!obj || typeof obj !== "object") return obj;
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
+/** Sanitize providerProfile: only allowed fields with correct types for Prisma. */
+function sanitizeProviderProfile(profile) {
+  if (!profile || typeof profile !== "object") return null;
+  const num = toNumberOrNull(profile.hourlyRate);
+  const minB = toNumberOrNull(profile.minimumProjectBudget);
+  const maxB = toNumberOrNull(profile.maximumProjectBudget);
+  return {
+    bio: profile.bio != null ? String(profile.bio) : undefined,
+    major: profile.major != null ? String(profile.major) : undefined,
+    location: profile.location != null ? String(profile.location) : undefined,
+    hourlyRate: num !== null ? num : undefined,
+    availability: profile.availability != null ? String(profile.availability) : undefined,
+    website: profile.website != null && profile.website !== "" ? String(profile.website) : undefined,
+    profileImageUrl: profile.profileImageUrl != null && profile.profileImageUrl !== "" ? String(profile.profileImageUrl) : undefined,
+    skills: toStringArray(profile.skills),
+    languages: toStringArray(profile.languages),
+    portfolioLinks: toStringArray(profile.portfolioLinks),
+    yearsExperience: toIntOrNull(profile.yearsExperience),
+    minimumProjectBudget: minB !== null ? new Prisma.Decimal(minB) : undefined,
+    maximumProjectBudget: maxB !== null ? new Prisma.Decimal(maxB) : undefined,
+    preferredProjectDuration: profile.preferredProjectDuration != null ? String(profile.preferredProjectDuration) : undefined,
+    workPreference: profile.workPreference != null ? String(profile.workPreference) : "remote",
+    teamSize: toIntOrNull(profile.teamSize) ?? 1,
+  };
+}
+
+/** Sanitize customerProfile: only allowed fields with correct types for Prisma. */
+function sanitizeCustomerProfile(profile) {
+  if (!profile || typeof profile !== "object") return null;
+  const annRev = toNumberOrNull(profile.annualRevenue);
+  const socialLinks = Array.isArray(profile.socialLinks)
+    ? profile.socialLinks.map((s) => (s != null ? String(s) : ""))
+    : [];
+  let benefits = profile.benefits;
+  if (benefits !== undefined && benefits !== null) {
+    if (typeof benefits !== "string" && typeof benefits !== "object") benefits = String(benefits);
+  }
+  return {
+    description: profile.description != null ? String(profile.description) : undefined,
+    industry: profile.industry != null ? String(profile.industry) : undefined,
+    location: profile.location != null ? String(profile.location) : undefined,
+    website: profile.website != null && profile.website !== "" ? String(profile.website) : undefined,
+    profileImageUrl: profile.profileImageUrl != null && profile.profileImageUrl !== "" ? String(profile.profileImageUrl) : undefined,
+    socialLinks: socialLinks.length ? socialLinks : undefined,
+    languages: toStringArray(profile.languages),
+    companySize: profile.companySize != null ? String(profile.companySize) : undefined,
+    employeeCount: toIntOrNull(profile.employeeCount),
+    establishedYear: toIntOrNull(profile.establishedYear),
+    annualRevenue: annRev !== null ? new Prisma.Decimal(annRev) : undefined,
+    fundingStage: profile.fundingStage != null ? String(profile.fundingStage) : undefined,
+    preferredContractTypes: toStringArray(profile.preferredContractTypes),
+    averageBudgetRange: profile.averageBudgetRange != null ? String(profile.averageBudgetRange) : undefined,
+    remotePolicy: profile.remotePolicy != null ? String(profile.remotePolicy) : undefined,
+    hiringFrequency: profile.hiringFrequency != null ? String(profile.hiringFrequency) : undefined,
+    categoriesHiringFor: toStringArray(profile.categoriesHiringFor),
+    mission: profile.mission != null ? String(profile.mission) : undefined,
+    values: toStringArray(profile.values),
+    benefits: benefits !== undefined && benefits !== null ? benefits : undefined,
+    mediaGallery: toStringArray(profile.mediaGallery),
+  };
+}
+
 export const userModel = {
   async getUserByEmail(email) {
     return prisma.user.findUnique({ where: { email } });
@@ -230,46 +322,54 @@ export const userModel = {
   async updateUser(userId, updateData) {
     // Separate user fields from profile fields
     const { providerProfile, customerProfile, ...userFields } = updateData;
-    
-    // Update user fields
+
+    // Build user update with safe types
     const userUpdateData = {};
-    const allowedUserFields = ["name", "email", "phone", "isVerified", "status", "kycStatus"];
-    Object.keys(userFields).forEach((key) => {
-      if (allowedUserFields.includes(key)) {
-        userUpdateData[key] = userFields[key];
-      }
-    });
+    if (userFields.name !== undefined) userUpdateData.name = String(userFields.name);
+    if (userFields.email !== undefined) userUpdateData.email = String(userFields.email).trim().toLowerCase();
+    if (userFields.phone !== undefined) userUpdateData.phone = userFields.phone != null && userFields.phone !== "" ? String(userFields.phone) : null;
+    if (userFields.isVerified !== undefined) userUpdateData.isVerified = Boolean(userFields.isVerified);
+    if (userFields.status !== undefined) userUpdateData.status = String(userFields.status);
+    if (userFields.kycStatus !== undefined) userUpdateData.kycStatus = String(userFields.kycStatus);
 
     // Update user and profile in a transaction
     const user = await prisma.$transaction(async (tx) => {
-      // Update user
-      const updatedUser = await tx.user.update({
-        where: { id: userId },
-        data: userUpdateData,
-      });
-
-      // Update provider profile if provided
-      if (providerProfile) {
-        await tx.providerProfile.upsert({
-          where: { userId },
-          update: providerProfile,
-          create: {
-            userId,
-            ...providerProfile,
-          },
+      // Update user (only if we have something to update)
+      if (Object.keys(userUpdateData).length > 0) {
+        await tx.user.update({
+          where: { id: userId },
+          data: userUpdateData,
         });
       }
 
-      // Update customer profile if provided
+      // Update provider profile if provided (sanitize so Prisma accepts types)
+      if (providerProfile) {
+        const sanitized = omitUndefined(sanitizeProviderProfile(providerProfile));
+        if (Object.keys(sanitized).length > 0) {
+          await tx.providerProfile.upsert({
+            where: { userId },
+            update: sanitized,
+            create: {
+              userId,
+              ...sanitized,
+            },
+          });
+        }
+      }
+
+      // Update customer profile if provided (sanitize so Prisma accepts types)
       if (customerProfile) {
-        await tx.customerProfile.upsert({
-          where: { userId },
-          update: customerProfile,
-          create: {
-            userId,
-            ...customerProfile,
-          },
-        });
+        const sanitized = omitUndefined(sanitizeCustomerProfile(customerProfile));
+        if (Object.keys(sanitized).length > 0) {
+          await tx.customerProfile.upsert({
+            where: { userId },
+            update: sanitized,
+            create: {
+              userId,
+              ...sanitized,
+            },
+          });
+        }
       }
 
       // Return updated user with profiles
@@ -287,11 +387,7 @@ export const userModel = {
               performance: true,
             },
           },
-          customerProfile: {
-            include: {
-              mediaGallery: true,
-            },
-          },
+          customerProfile: true,
         },
       });
     });

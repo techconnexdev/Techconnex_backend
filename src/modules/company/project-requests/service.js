@@ -466,7 +466,7 @@ export async function acceptProposal(dto) {
           userId: proposal.providerId,
           title: "Proposal Accepted",
           type: "proposal",
-          content: `Your proposal for "${proposal.serviceRequest.title}" has been accepted!`,
+          content: "Congratulations! Your proposal has been accepted. You can start working once the escrow is confirmed.",
           metadata: {
             projectId: project.id,
             projectTitle: project.title,

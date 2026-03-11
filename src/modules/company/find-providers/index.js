@@ -1,6 +1,6 @@
 // src/modules/company/find-providers/index.js
 import express from "express";
-import { authenticateToken } from "../../../middlewares/auth.js";
+import { authenticateToken, optionalAuthenticateToken } from "../../../middlewares/auth.js";
 import {
   findProviders,
   getProvider,
@@ -19,30 +19,32 @@ import {
 
 const router = express.Router();
 
-// Apply authentication to all routes
-router.use(authenticateToken);
+// Optional auth: allow guests to browse providers; logged-in users get req.user (e.g. for saved status)
+router.use(optionalAuthenticateToken);
 
-// Provider search and listing
-router.get("/recommended", getRecommendedProvidersController);
+// Provider search and listing (public)
 router.get("/", findProviders);
 router.get("/filters", getFilters);
-router.get("/ai-drafts", getAiDraftsController);
 
-// Saved providers for user (must come before /:id routes)
-router.get("/users/:userId/saved-providers", getSavedProviders);
+// Auth required: recommended and ai-drafts are user-specific
+router.get("/recommended", authenticateToken, getRecommendedProvidersController);
+router.get("/ai-drafts", authenticateToken, getAiDraftsController);
 
-// Individual provider endpoints (specific routes must come before generic /:id)
-router.get("/:id/full", getProviderFullDetails); // Combined endpoint for frontend
+// Auth required: saved providers for user (must come before /:id routes)
+router.get("/users/:userId/saved-providers", authenticateToken, getSavedProviders);
+
+// Individual provider endpoints (public read; specific routes must come before generic /:id)
+router.get("/:id/full", getProviderFullDetails);
 router.get("/:id/portfolio", getProviderPortfolioController);
 router.get("/:id/completed-projects", getProviderCompletedProjectsController);
 router.get("/:id/reviews", getProviderReviews);
 router.get("/:id/stats", getProviderStats);
 
-// Save/unsave provider
-router.post("/:id/save", saveProvider);
-router.delete("/:id/save", unsaveProvider);
+// Auth required: save/unsave provider
+router.post("/:id/save", authenticateToken, saveProvider);
+router.delete("/:id/save", authenticateToken, unsaveProvider);
 
-// Generic provider endpoint (must be last)
+// Generic provider detail (public)
 router.get("/:id", getProvider);
 
 export default router;

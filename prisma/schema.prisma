@@ -58,7 +58,8 @@ model User {
   savedByProviders   SavedCompany[]   @relation("CompanySavedByProviders")
 
   //Notifications
-  notifications Notification[]
+  notifications     Notification[]
+  pushSubscriptions PushSubscription[]
 
   Dispute Dispute[]
 
@@ -83,6 +84,20 @@ model Notification {
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
   metadata  Json? // Store additional payment info
+}
+
+model PushSubscription {
+  id        String   @id @default(uuid()) @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String   @db.Uuid
+  endpoint  String   @db.Text
+  p256dh    String   @db.Text
+  auth      String   @db.Text
+  createdAt DateTime @default(now())
+
+  @@unique([userId, endpoint])
+  @@index([userId])
+  @@map("push_subscriptions")
 }
 
 model ProviderProfile {
@@ -173,6 +188,7 @@ model Settings {
   // 🔔 Notifications
   emailNotifications Boolean @default(true)
   smsNotifications   Boolean @default(false)
+  pushNotifications  Boolean @default(true)
   projectUpdates     Boolean @default(true)
   marketingEmails    Boolean @default(false)
   weeklyReports      Boolean @default(true)

@@ -1,4 +1,5 @@
 // src/modules/auth/provider/controller.js
+import { FRIENDLY_500_MESSAGE } from "../../../utils/errors.js";
 import { registerProvider, becomeCustomer, updatePassword } from "./service.js";
 import { RegisterProviderDto } from "./dto.js";
 
@@ -28,7 +29,7 @@ async function becomeCustomerHandler(req, res) {
 
     res.status(201).json({ success: true, profile: result.profile });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 }
 

@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { userModel } from "../auth/admin/model.js";
+import { sendEmail } from "../auth/sendEmail.js";
 
 const prisma = new PrismaClient();
 
@@ -128,6 +129,33 @@ export const markNotificationAsRead = async (notificationId, userId) => {
   });
 };
 
+/** Save or update push subscription for a user. */
+export const savePushSubscription = async (userId, { endpoint, keys }) => {
+  if (!endpoint || !keys?.p256dh || !keys?.auth) {
+    throw new Error("Invalid subscription: endpoint, p256dh, and auth are required");
+  }
+  const existing = await prisma.pushSubscription.findFirst({
+    where: { userId, endpoint },
+  });
+  if (existing) {
+    return prisma.pushSubscription.update({
+      where: { id: existing.id },
+      data: { p256dh: keys.p256dh, auth: keys.auth },
+    });
+  }
+  return prisma.pushSubscription.create({
+    data: { userId, endpoint, p256dh: keys.p256dh, auth: keys.auth },
+  });
+};
+
+/** Remove push subscription for a user. */
+export const removePushSubscription = async (userId, endpoint) => {
+  if (!endpoint) throw new Error("Endpoint is required");
+  return prisma.pushSubscription.deleteMany({
+    where: { userId, endpoint },
+  });
+};
+
 /** Mark multiple notifications as read (e.g. when opening a grouped notification). */
 export const markNotificationsAsRead = async (notificationIds, userId) => {
   if (!Array.isArray(notificationIds) || notificationIds.length === 0) return;
@@ -140,8 +168,82 @@ export const markNotificationsAsRead = async (notificationIds, userId) => {
   });
 };
 
+/**
+ * Deliver notification via email and push based on user preferences.
+ * Called asynchronously after createNotification (fire-and-forget).
+ */
+async function deliverNotificationChannels(notification) {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: notification.userId },
+      select: { email: true },
+    });
+    if (!user?.email) return;
+
+    const settings = await prisma.settings.findUnique({
+      where: { userId: notification.userId },
+    });
+    if (!settings) return;
+
+    const baseUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_APP_URL || "https://www.techconnex.vip";
+    const linkPath = getLinkPath(notification);
+    const url = linkPath ? `${baseUrl}${linkPath.startsWith("/") ? "" : "/"}${linkPath}` : baseUrl;
+
+    // Email notifications
+    if (settings.emailNotifications) {
+      try {
+        await sendEmail({
+          to: user.email,
+          subject: `[TechConnex] ${notification.title}`,
+          text: `${notification.content}\n\nView in app: ${url}`,
+        });
+      } catch (err) {
+        console.error("Notification email send failed:", err);
+      }
+    }
+
+    // Push notifications
+    if (settings.pushNotifications) {
+      try {
+        const webpush = (await import("web-push")).default;
+        const vapidPublic = process.env.VAPID_PUBLIC_KEY;
+        const vapidPrivate = process.env.VAPID_PRIVATE_KEY;
+        if (!vapidPublic || !vapidPrivate) return;
+
+        webpush.setVapidDetails("mailto:support@techconnex.vip", vapidPublic, vapidPrivate);
+
+        const subs = await prisma.pushSubscription.findMany({
+          where: { userId: notification.userId },
+        });
+
+        for (const sub of subs) {
+          try {
+            await webpush.sendNotification(
+              { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+              JSON.stringify({
+                title: notification.title,
+                body: notification.content,
+                url: url,
+              }),
+              { TTL: 60 }
+            );
+          } catch (pushErr) {
+            if (pushErr.statusCode === 410 || pushErr.statusCode === 404) {
+              await prisma.pushSubscription.delete({ where: { id: sub.id } }).catch(() => {});
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Notification push send failed:", err);
+      }
+    }
+  } catch (err) {
+    console.error("deliverNotificationChannels failed:", err);
+  }
+}
+
 export const createNotification = async (data) => {
-  return prisma.notification.create({
+  const notification = await prisma.notification.create({
     data: {
       userId: data.userId,
       title: data.title,
@@ -150,6 +252,10 @@ export const createNotification = async (data) => {
       metadata: data.metadata || null,
     },
   });
+  deliverNotificationChannels(notification).catch((err) =>
+    console.error("Notification delivery failed:", err)
+  );
+  return notification;
 };
 
 /**

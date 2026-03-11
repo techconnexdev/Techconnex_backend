@@ -3,6 +3,9 @@ import {
   getNotificationsByUserController,
   markNotificationAsReadController,
   markNotificationsAsReadController,
+  subscribePushController,
+  unsubscribePushController,
+  getVapidPublicKeyController,
 } from "./controller.js";
 import { authenticateToken } from "../../middlewares/auth.js";
 
@@ -16,5 +19,10 @@ router.patch("/read-bulk", authenticateToken, markNotificationsAsReadController)
 
 // PATCH mark single notification as read
 router.patch("/:id/read", authenticateToken, markNotificationAsReadController);
+
+// Push notifications: subscribe / unsubscribe
+router.get("/push/vapid-public", getVapidPublicKeyController);
+router.post("/push/subscribe", authenticateToken, subscribePushController);
+router.post("/push/unsubscribe", authenticateToken, unsubscribePushController);
 
 export default router;

@@ -1,4 +1,5 @@
 // src/modules/company/auth/controller.js
+import { FRIENDLY_500_MESSAGE } from "../../../utils/errors.js";
 import {
   registerCompany,
   becomeProvider,
@@ -33,7 +34,7 @@ async function becomeProviderHandler(req, res) {
 
     res.status(201).json({ success: true, profile: result.profile });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 }
 

@@ -6,6 +6,7 @@ import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
 import routes from "./routes/index.js";
+import { FRIENDLY_500_MESSAGE } from "./utils/errors.js";
 
 const app = express();
 
@@ -65,9 +66,10 @@ app.use((err, req, res, next) => {
   console.error("💥 Global error:", err);
   Sentry.captureException(err);
   const status = err.status || 500;
+  const message = status >= 500 ? FRIENDLY_500_MESSAGE : (err.message || "Something went wrong");
   res.status(status).json({
     success: false,
-    message: err.message || "Internal Server Error",
+    message,
   });
 });
 

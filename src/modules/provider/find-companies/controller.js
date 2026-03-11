@@ -1,4 +1,5 @@
 // src/modules/provider/find-companies/controller.js
+import { FRIENDLY_500_MESSAGE } from "../../../utils/errors.js";
 import {
   searchCompanies,
   getCompanyDetails,
@@ -282,7 +283,7 @@ export async function getAiDraftsController(req, res) {
     res.json({ success: true, drafts });
   } catch (error) {
     console.error("Error in getAiDraftsController:", error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 }
 

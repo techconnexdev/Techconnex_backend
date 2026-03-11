@@ -1,4 +1,5 @@
 import "dotenv/config";
+import "./console-production.js";
 // Sentry loaded via node --import ./instrument.js (must run before Express)
 import http from "http";
 import { Server } from "socket.io";

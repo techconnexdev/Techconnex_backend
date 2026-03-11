@@ -1,5 +1,6 @@
 import { summarizeFullResume, uploadResumeFile } from "./service.js";
 import { getResumeByUserId, deleteResumeRecord } from "./model.js";
+import { FRIENDLY_500_MESSAGE } from "../../utils/errors.js";
 
 export const analyzeResume = async (req, res) => {
   try {
@@ -76,7 +77,7 @@ export const getMyResume = async (req, res) => {
     });
   } catch (error) {
     console.error("Get resume error:", error);
-    return res.status(500).json({ error: "Failed to get resume.", details: error.message });
+    return res.status(500).json({ error: FRIENDLY_500_MESSAGE });
   }
 };
 
@@ -110,7 +111,7 @@ export const getResumeByUserIdController = async (req, res) => {
     });
   } catch (error) {
     console.error("Get resume error:", error);
-    return res.status(500).json({ error: "Failed to get resume.", details: error.message });
+    return res.status(500).json({ error: FRIENDLY_500_MESSAGE });
   }
 };
 
@@ -137,6 +138,6 @@ export const deleteMyResume = async (req, res) => {
     });
   } catch (error) {
     console.error("Delete resume error:", error);
-    return res.status(500).json({ error: "Failed to delete resume.", details: error.message });
+    return res.status(500).json({ error: FRIENDLY_500_MESSAGE });
   }
 };

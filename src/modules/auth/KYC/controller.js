@@ -1,4 +1,5 @@
 // src/modules/auth/KYC/controller.js
+import { FRIENDLY_500_MESSAGE } from "../../../utils/errors.js";
 import {
   getKycDocumentByUserId,
   getReviewersByIds,
@@ -44,7 +45,7 @@ export const createKyc = async (req, res) => {
     });
   } catch (error) {
     console.error("Error creating KYC:", error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: FRIENDLY_500_MESSAGE });
   }
 };
 
@@ -108,7 +109,7 @@ export const getAllKyc = async (req, res) => {
   } catch (error) {
     console.error("🔥 Error fetching KYC list:", error);
     res.status(500).json({
-      error: error.message || "Failed to load KYC documents",
+      error: FRIENDLY_500_MESSAGE,
     });
   }
 };
@@ -175,15 +176,28 @@ export const reviewKycDocument = async (req, res) => {
       console.error("Failed to create notification:", notificationError);
     }
 
-    // Fetch updated user with all KYC documents formatted for response
+    // Fetch updated user with all KYC documents formatted for response.
+    // Use param userId (verified user) only — never mix in req.user to avoid returning admin role.
     const updatedUser = await getUserWithKycDocuments(userId);
     
     if (!updatedUser) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    res.status(200).json(updatedUser);
+    // Return only verified user payload (explicit shape so role is never from admin)
+    res.status(200).json({
+      id: updatedUser.id,
+      name: updatedUser.name,
+      email: updatedUser.email,
+      phone: updatedUser.phone,
+      role: updatedUser.role,
+      kycStatus: updatedUser.kycStatus,
+      isVerified: updatedUser.isVerified,
+      providerProfile: updatedUser.providerProfile,
+      customerProfile: updatedUser.customerProfile,
+      kycDocuments: updatedUser.kycDocuments,
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: FRIENDLY_500_MESSAGE });
   }
 };

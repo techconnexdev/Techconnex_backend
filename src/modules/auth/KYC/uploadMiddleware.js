@@ -1,5 +1,6 @@
 import multer from "multer";
 import { uploadFileToR2, generateFileKey } from "../../../utils/r2.js";
+import { FRIENDLY_500_MESSAGE } from "../../../utils/errors.js";
 import { createKycDocument } from "./service.js";
 
 const allowedMime = [
@@ -71,7 +72,7 @@ export const uploadKycFiles = async (req, res) => {
     res.status(201).json({ success: true, data: created, message: "KYC document(s) uploaded" });
   } catch (error) {
     console.error("KYC upload error:", error);
-    res.status(500).json({ success: false, message: error.message || "KYC upload failed" });
+    res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
   }
 };
 

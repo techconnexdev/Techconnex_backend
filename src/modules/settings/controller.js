@@ -1,4 +1,5 @@
 // /controllers/settings.controller.js
+import { FRIENDLY_500_MESSAGE } from "../../utils/errors.js";
 import {
   getSettingsByUserId,
   updateNotifications,
@@ -17,7 +18,7 @@ export const getSettings = async (req, res) => {
     res.json(settings);
   } catch (error) {
     console.error("Error fetching settings:", error);
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: FRIENDLY_500_MESSAGE });
   }
 };
 
@@ -29,7 +30,7 @@ export const getUserPayments = async (req, res) => {
     res.json(payments);
   } catch (error) {
     console.error("Error fetching payments:", error);
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: FRIENDLY_500_MESSAGE });
   }
 };
 
