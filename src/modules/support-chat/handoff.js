@@ -29,6 +29,11 @@ const HANDOFF_KEYWORDS = [
   "human agent",
   "support agent",
   "live agent",
+  "contact support",
+  "support team",
+  "support agent",
+  "support team",
+  "support team",
 ];
 
 /**
