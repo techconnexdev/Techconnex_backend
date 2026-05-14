@@ -1,7 +1,4 @@
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
+import { prisma } from "../../utils/prisma.js";
 class KycModel {
   // Get KYC documents for a user
   static async getKycDocuments(userId) {

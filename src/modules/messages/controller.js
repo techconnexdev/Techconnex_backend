@@ -10,14 +10,37 @@ import {
   hasUserReportedConversation,
   hasReportBetweenUsers,
 } from "./service.js";
+import {
+  enrichMessagesWithTranslations,
+  getUserPreferredLocale,
+  normalizeLocaleInput,
+  translateTextsInOrder,
+} from "./translation-service.js";
 
 // Get messages - either all user messages or conversation with specific user
 export const getMessages = async (req, res) => {
   try {
     const userId = req.user.id || req.user.userId;
-    const { otherUserId } = req.query; // Optional: for specific conversation
+    const { otherUserId, translate, lang } = req.query; // lang = viewer UI locale (en|id|ar)
 
-    const messages = await fetchUserMessages(userId, otherUserId);
+    let messages = await fetchUserMessages(userId, otherUserId);
+
+    const translateOff = translate === "0" || translate === "false";
+    const shouldTranslate =
+      !translateOff &&
+      Boolean(otherUserId) &&
+      process.env.OPENAI_API_KEY &&
+      Array.isArray(messages);
+
+    const langOverride = normalizeLocaleInput(
+      typeof lang === "string" ? lang : "",
+    );
+
+    if (shouldTranslate) {
+      messages = await enrichMessagesWithTranslations(messages, userId, {
+        targetLocale: langOverride || undefined,
+      });
+    }
 
     res.json({
       success: true,
@@ -102,8 +125,25 @@ export const getProjectMessages = async (req, res) => {
   try {
     const { projectId } = req.params;
     const userId = req.user.id || req.user.userId;
+    const { translate, lang } = req.query;
 
-    const messages = await fetchProjectMessages(projectId, userId);
+    let messages = await fetchProjectMessages(projectId, userId);
+
+    const translateOff = translate === "0" || translate === "false";
+    const shouldTranslate =
+      !translateOff &&
+      process.env.OPENAI_API_KEY &&
+      Array.isArray(messages);
+
+    const langOverride = normalizeLocaleInput(
+      typeof lang === "string" ? lang : "",
+    );
+
+    if (shouldTranslate) {
+      messages = await enrichMessagesWithTranslations(messages, userId, {
+        targetLocale: langOverride || undefined,
+      });
+    }
 
     res.json({
       success: true,
@@ -193,6 +233,72 @@ export const reportConversationHandler = async (req, res) => {
     res.status(400).json({
       success: false,
       message: error.message || "Failed to submit report",
+    });
+  }
+};
+
+/**
+ * Batch-translate message texts (e.g. after a live socket message).
+ * Body: { items: [{ id, content }], targetLocale?: "en"|"id"|"ar" }
+ */
+export const translateMessagesBatchHandler = async (req, res) => {
+  try {
+    const userId = req.user.id || req.user.userId;
+    const { items, targetLocale } = req.body || {};
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.json({ success: true, translations: [] });
+    }
+
+    const clamped = items.slice(0, 40).map((it) => ({
+      id: String(it?.id ?? ""),
+      content: String(it?.content ?? ""),
+    }));
+
+    const texts = clamped.map((i) => i.content);
+    const fromBody = normalizeLocaleInput(targetLocale);
+    const locale = fromBody || (await getUserPreferredLocale(userId));
+
+    if (!String(process.env.OPENAI_API_KEY ?? "").trim()) {
+      return res.status(503).json({
+        success: false,
+        code: "OPENAI_NOT_CONFIGURED",
+        message:
+          "Translation is unavailable: add OPENAI_API_KEY to the backend .env and restart the server.",
+      });
+    }
+
+    let outs;
+    try {
+      outs = await translateTextsInOrder(texts, locale);
+    } catch (inner) {
+      const msg = inner?.message || String(inner);
+      if (
+        msg.includes("OPENAI_API_KEY") ||
+        msg.includes("401") ||
+        msg.includes("Incorrect API key")
+      ) {
+        return res.status(503).json({
+          success: false,
+          code: "OPENAI_MISCONFIGURED",
+          message:
+            "Translation failed: check OPENAI_API_KEY and billing/quota on your OpenAI account.",
+        });
+      }
+      throw inner;
+    }
+
+    const translations = clamped.map((it, i) => ({
+      id: it.id,
+      translatedContent: outs[i] ?? null,
+    }));
+
+    return res.json({ success: true, translations });
+  } catch (error) {
+    console.error("translateMessagesBatch error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Translation failed",
     });
   }
 };

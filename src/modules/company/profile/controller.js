@@ -1,8 +1,7 @@
 import CompanyProfileService from "./service.js";
-import { PrismaClient } from "@prisma/client";
-import { upsertCompanyAiDraftByUserId } from "../../auth/company/company-ai-draft.js";
 
-const prisma = new PrismaClient();
+import { upsertCompanyAiDraftByUserId } from "../../auth/company/company-ai-draft.js";
+import { prisma } from "../../../utils/prisma.js";
 
 // Get company profile
 async function getProfile(req, res) {

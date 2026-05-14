@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { PrismaClient } from "@prisma/client";
+
 import {
   findUserById,
   createCompanyUser,
@@ -13,8 +13,8 @@ import {
 import { findUserByEmail } from "../model.js";
 import { createCompanyAiDraft } from "./company-ai-draft.js";
 import { notifyAdminsOfNewUser } from "../../notifications/service.js";
-
-const prisma = new PrismaClient();
+import { prisma } from "../../../utils/prisma.js";
+import { consumePhoneReadyForRegistration } from "../phoneRegistrationVerify.js";
 
 async function registerCompany(dto) {
   const existingUser = await findUserByEmail(dto.email);
@@ -22,11 +22,16 @@ async function registerCompany(dto) {
 
   const hashedPassword = await bcrypt.hash(dto.password, 10);
 
+  const phoneVerified =
+    Boolean(dto.phone && String(dto.phone).trim()) &&
+    consumePhoneReadyForRegistration(dto.phone);
+
   // 🧾 Pass full DTO + hashed password to the model
   // model handles nested create for CustomerProfile + KycDocuments
   const user = await createCompanyUser({
     ...dto,
     password: hashedPassword,
+    phoneVerified,
   });
 
   // Try to generate AI draft for company profile if profile exists

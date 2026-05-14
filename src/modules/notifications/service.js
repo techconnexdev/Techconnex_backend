@@ -1,9 +1,7 @@
-import { PrismaClient } from "@prisma/client";
+
 import { userModel } from "../auth/admin/model.js";
 import { sendEmail } from "../auth/sendEmail.js";
-
-const prisma = new PrismaClient();
-
+import { prisma } from "../../utils/prisma.js";
 export const getNotificationsByUser = async (userId) => {
   return prisma.notification.findMany({
     where: { userId },
@@ -24,6 +22,143 @@ function getGroupKey(notification) {
   if (projectId) return `p:${projectId}:${type}:${eventType}`;
   if (serviceRequestId) return `s:${serviceRequestId}:${type}:${eventType}`;
   return `u:${notification.id}:${type}:${eventType}`;
+}
+
+/** Non-empty string for WhatsApp template variables (Twilio rejects empty values). */
+function templateText(value, fallback) {
+  const t = String(value ?? "").trim();
+  return t.length ? t.slice(0, 600) : fallback;
+}
+
+/**
+ * Send WhatsApp using approved Content SIDs (avoids error 63016 outside the 24h session window).
+ * OTP and contact-change flows already use templates in twilioWhatsApp.js; this covers in-app notifications.
+ */
+async function sendTemplatedWhatsAppNotification(toE164, notification, actionUrl) {
+  const tw = await import("../auth/twilioWhatsApp.js");
+  const meta =
+    notification.metadata && typeof notification.metadata === "object"
+      ? notification.metadata
+      : {};
+  const type = String(notification.type || "system");
+  const baseUrl =
+    process.env.FRONTEND_URL ||
+    process.env.NEXT_PUBLIC_APP_URL ||
+    "https://www.techconnex.vip";
+  const linkUrl = templateText(actionUrl, baseUrl);
+
+  const projectTitle =
+    templateText(meta.projectTitle, "") ||
+    templateText(meta.serviceRequestTitle, "") ||
+    templateText(notification.title, "TechConnex");
+
+  if (type === "milestone") {
+    const milestoneTitle = templateText(meta.milestoneTitle, "Milestones");
+    const updateType = templateText(notification.title, "Update");
+    await tw.sendWhatsAppCopyMilestoneUpdateTemplate({
+      toE164,
+      projectTitle,
+      milestoneTitle,
+      updateType,
+      actionUrl: linkUrl,
+    });
+    return;
+  }
+
+  if (type === "proposal") {
+    await tw.sendWhatsAppProposalUpdateTemplate({
+      toE164,
+      projectTitle,
+      proposalStatus: templateText(notification.title, "Proposal"),
+      amountOrReason: templateText(notification.content, "Open app for details").slice(
+        0,
+        500,
+      ),
+      actionUrl: linkUrl,
+    });
+    return;
+  }
+
+  if (type === "payment") {
+    await tw.sendWhatsAppSystemPaymentUpdateTemplate({
+      toE164,
+      paymentType: templateText(notification.title, "Payment"),
+      amount: templateText(
+        meta.amountDisplay || meta.amount,
+        templateText(notification.content, "Escrow").slice(0, 80),
+      ),
+      referenceOrMilestone: templateText(
+        meta.milestoneTitle,
+        templateText(notification.content, "Milestone").slice(0, 120),
+      ),
+      actionUrl: linkUrl,
+    });
+    return;
+  }
+
+  if (type === "dispute") {
+    await tw.sendWhatsAppSystemDisputeNotificationTemplate({
+      toE164,
+      projectTitle,
+      disputeStatus: templateText(notification.title, "Dispute"),
+      shortReason: templateText(notification.content, "See app").slice(0, 400),
+      actionUrl: linkUrl,
+    });
+    return;
+  }
+
+  if (type === "project") {
+    await tw.sendWhatsAppSystemStatusTemplate({
+      toE164,
+      entityType: "Project",
+      entityName: projectTitle.slice(0, 200),
+      newStatus: templateText(
+        meta.newStatus || notification.title,
+        "Updated",
+      ).slice(0, 200),
+      actionUrl: linkUrl,
+    });
+    return;
+  }
+
+  if (
+    type === "system" &&
+    meta.eventType === "review_received" &&
+    meta.reviewerName
+  ) {
+    await tw.sendWhatsAppSystemReviewNotificationTemplate({
+      toE164,
+      reviewerName: templateText(meta.reviewerName, "Client"),
+      rating:
+        meta.rating != null && String(meta.rating).trim() !== ""
+          ? String(meta.rating)
+          : "",
+      projectTitle: templateText(meta.projectTitle, projectTitle).slice(0, 200),
+      actionUrl: linkUrl,
+    });
+    return;
+  }
+
+  if (
+    type === "system" &&
+    (meta.action === "approved" || meta.action === "rejected")
+  ) {
+    await tw.sendWhatsAppKycUpdateTemplate({
+      toE164,
+      kycStatus: templateText(notification.title, "KYC"),
+      shortNote: templateText(notification.content, "See app").slice(0, 400),
+      actionUrl: linkUrl,
+    });
+    return;
+  }
+
+  await tw.sendWhatsAppSystemStatusTemplate({
+    toE164,
+    entityType: type.slice(0, 60),
+    entityName: projectTitle.slice(0, 200),
+    newStatus: templateText(notification.title, "Notification").slice(0, 200),
+    actionUrl: linkUrl,
+  });
 }
 
 /**
@@ -176,9 +311,9 @@ async function deliverNotificationChannels(notification) {
   try {
     const user = await prisma.user.findUnique({
       where: { id: notification.userId },
-      select: { email: true },
+      select: { email: true, phone: true },
     });
-    if (!user?.email) return;
+    if (!user?.email && !user?.phone) return;
 
     const settings = await prisma.settings.findUnique({
       where: { userId: notification.userId },
@@ -190,7 +325,7 @@ async function deliverNotificationChannels(notification) {
     const url = linkPath ? `${baseUrl}${linkPath.startsWith("/") ? "" : "/"}${linkPath}` : baseUrl;
 
     // Email notifications
-    if (settings.emailNotifications) {
+    if (settings.emailNotifications && user.email) {
       try {
         await sendEmail({
           to: user.email,
@@ -199,6 +334,22 @@ async function deliverNotificationChannels(notification) {
         });
       } catch (err) {
         console.error("Notification email send failed:", err);
+      }
+    }
+
+    // WhatsApp (Twilio): uses SMS toggle in settings as opt-in until a dedicated field exists.
+    // Must use approved Content templates (ContentSid), not free-form body, or Twilio returns 63016 outside the 24h window.
+    if (settings.smsNotifications && user.phone) {
+      try {
+        const { isTwilioWhatsAppConfigured, normalizeToE164 } = await import(
+          "../auth/twilioWhatsApp.js"
+        );
+        if (isTwilioWhatsAppConfigured()) {
+          const e164 = normalizeToE164(user.phone);
+          await sendTemplatedWhatsAppNotification(e164, notification, url);
+        }
+      } catch (err) {
+        console.error("Notification WhatsApp send failed:", err);
       }
     }
 

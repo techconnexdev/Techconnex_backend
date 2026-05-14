@@ -3,14 +3,12 @@
  * Uses Company Manual + Provider Manual only.
  */
 import { OpenAIEmbeddings } from "@langchain/openai";
-import { PrismaClient } from "@prisma/client";
+
 import { downloadFileFromR2 } from "../../utils/r2.js";
 import { createRequire } from "module";
+import { prisma } from "../../utils/prisma.js";
 const require = createRequire(import.meta.url);
 const pdfParse = require("pdf-parse");
-
-const prisma = new PrismaClient();
-
 const CHUNK_SIZE = 800;
 const CHUNK_OVERLAP = 150;
 const TOP_K = 10;

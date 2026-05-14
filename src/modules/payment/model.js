@@ -1,8 +1,4 @@
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
-
+import { prisma } from "../../utils/prisma.js";
 export const createPaymentRecord = async ({ projectId, milestoneId, amount, currency }) => {
   return await prisma.payment.create({
     data: {

@@ -4,13 +4,25 @@ import { CreateProjectDto, GetProjectsDto } from "./dto.js";
 import { createServiceRequestAiDraft } from "./service-request-ai-draft.js";
 import { createNotification } from "../../notifications/service.js";
 import { getTotalSpent } from "../billing/model.js";
+import {
+  fetchLatestFxSnapshot,
+  hasCurrencyInSnapshot,
+  normalizeCurrencyCode,
+} from "../../fx/service.js";
 
 export async function createProject(dto) {
   try {
+    const currencyCode = normalizeCurrencyCode(dto.currencyCode || "MYR");
+    const fxSnapshot = await fetchLatestFxSnapshot();
+    if (!hasCurrencyInSnapshot(currencyCode, fxSnapshot.ratesMap)) {
+      throw new Error("Selected currency is not supported");
+    }
+
     // Create a ServiceRequest - Projects are created when proposals are accepted
-    // Use transaction to ensure atomicity when updating projectsPosted
-    const result = await prisma.$transaction(async (tx) => {
-      // Create ServiceRequest
+    // Use transaction only for writes (create + projectsPosted). Heavy findUnique with
+    // includes was kept inside the transaction before and could exceed Prisma's default
+    // 5s interactive transaction limit → P2028 on slow DBs.
+    const created = await prisma.$transaction(async (tx) => {
       const serviceRequest = await tx.serviceRequest.create({
         data: {
           title: dto.title,
@@ -18,6 +30,11 @@ export async function createProject(dto) {
           category: dto.category,
           budgetMin: dto.budgetMin,
           budgetMax: dto.budgetMax,
+          currencyCode,
+          fxSnapshotDate: fxSnapshot.date || null,
+          fxSnapshotSession: fxSnapshot.session || null,
+          fxSnapshotQuote: fxSnapshot.quote || "RM",
+          fxSnapshotRatesJson: fxSnapshot.ratesMap,
           skills: dto.skills,
           timeline: dto.timeline,
           priority: dto.priority,
@@ -29,8 +46,6 @@ export async function createProject(dto) {
         },
       });
 
-      // Increment projectsPosted in CustomerProfile
-      // First, get current value to handle nulls properly
       const customerProfile = await tx.customerProfile.findUnique({
         where: { userId: dto.customerId },
         select: { projectsPosted: true },
@@ -49,49 +64,50 @@ export async function createProject(dto) {
         },
       });
 
-      // Return service request with all relations
-      return await tx.serviceRequest.findUnique({
-        where: { id: serviceRequest.id },
-        include: {
-          customer: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              customerProfile: {
-                select: {
-                  companySize: true,
-                  industry: true,
-                },
+      return serviceRequest;
+    });
+
+    const result = await prisma.serviceRequest.findUnique({
+      where: { id: created.id },
+      include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            customerProfile: {
+              select: {
+                companySize: true,
+                industry: true,
               },
             },
           },
-          proposals: {
-            include: {
-              provider: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  providerProfile: {
-                    select: {
-                      rating: true,
-                      totalProjects: true,
-                      location: true,
-                      profileImageUrl: true, // 🆕 Profile image
-                    },
+        },
+        proposals: {
+          include: {
+            provider: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                providerProfile: {
+                  select: {
+                    rating: true,
+                    totalProjects: true,
+                    location: true,
+                    profileImageUrl: true, // 🆕 Profile image
                   },
                 },
               },
             },
           },
-          milestones: {
-            orderBy: {
-              order: "asc",
-            },
+        },
+        milestones: {
+          orderBy: {
+            order: "asc",
           },
         },
-      });
+      },
     });
 
     // Try to generate AI draft for service request
@@ -107,6 +123,19 @@ export async function createProject(dto) {
     return result;
   } catch (error) {
     console.error("Error creating service request:", error);
+    const msg = String(error?.message || "");
+    if (
+      msg.includes("BNM exchange rate request failed") ||
+      msg.includes("aborted") ||
+      msg.includes("fetch")
+    ) {
+      throw new Error(
+        "Exchange rate service is temporarily unavailable. Please try again in a moment."
+      );
+    }
+    if (msg.includes("Selected currency is not supported")) {
+      throw new Error("Selected currency is not supported");
+    }
     throw new Error("Failed to create service request");
   }
 }
@@ -371,6 +400,15 @@ export async function getProjectById(projectId, customerId) {
     });
 
     if (serviceRequest) {
+      // Bookmarked URLs use the ServiceRequest id; once a proposal is accepted the
+      // canonical resource is the Project. Resolve so clients get one payload shape.
+      if (
+        serviceRequest.status === "MATCHED" &&
+        serviceRequest.projectId
+      ) {
+        return await getProjectById(serviceRequest.projectId, customerId);
+      }
+
       return {
         ...serviceRequest,
         type: "ServiceRequest",
@@ -410,6 +448,8 @@ export async function getProjectById(projectId, customerId) {
                 location: true,
                 bio: true,
                 skills: true,
+                profileImageUrl: true,
+                major: true,
               },
             },
           },
@@ -483,6 +523,7 @@ export async function getProjectById(projectId, customerId) {
         },
         select: {
           id: true,
+          bidAmount: true,
           deliveryTime: true, // Provider's proposed timeline in days
         },
       });
@@ -531,6 +572,7 @@ export async function getProjectById(projectId, customerId) {
       budgetMin: originalServiceRequest?.budgetMin ?? null,
       budgetMax: originalServiceRequest?.budgetMax ?? null,
       providerProposedTimeline: acceptedProposal?.deliveryTime || null, // Provider's proposed timeline in days (number, frontend will format)
+      bidAmount: acceptedProposal?.bidAmount ?? null, // Accepted proposal bid (project currency)
       approvedPrice, // Sum of all milestone amounts
       totalSpent, // Sum of PAID milestone amounts
       progress, // Percentage of completed milestones

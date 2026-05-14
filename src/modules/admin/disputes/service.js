@@ -1,5 +1,41 @@
 import { disputeModel } from "./model.js";
-import { refundPayment, releasePaymentForDispute } from "../../payment/service.js";
+import {
+  refundPayment,
+  releasePaymentForDispute,
+} from "../../payment/service.js";
+import { notifyDisputeAdminDecision } from "../../disputes/disputeNotifications.js";
+
+import { prisma } from "../../../utils/prisma.js";
+/**
+ * Find an ESCROWED payment for Stripe refund / release. Links dispute.paymentId when missing.
+ */
+async function findEscrowPaymentIdForDispute(dispute, prisma) {
+  if (dispute.paymentId) {
+    const linked = await prisma.payment.findUnique({
+      where: { id: dispute.paymentId },
+      select: { id: true, status: true },
+    });
+    if (linked?.status === "ESCROWED") return linked.id;
+  }
+  if (dispute.milestoneId) {
+    const byMilestone = await prisma.payment.findFirst({
+      where: {
+        milestoneId: dispute.milestoneId,
+        status: "ESCROWED",
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    if (byMilestone) return byMilestone.id;
+  }
+  const byProject = await prisma.payment.findFirst({
+    where: {
+      projectId: dispute.projectId,
+      status: "ESCROWED",
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  return byProject?.id || null;
+}
 
 export const disputeService = {
   async getAllDisputes(filters = {}) {
@@ -23,25 +59,41 @@ export const disputeService = {
     }
   },
 
-  async resolveDispute(disputeId, resolution, status, adminId = null, adminName = null) {
+  async resolveDispute(
+    disputeId,
+    resolution,
+    status,
+    adminId = null,
+    adminName = null,
+  ) {
     try {
       const dispute = await disputeModel.getDisputeById(disputeId);
       if (!dispute) {
         throw new Error("Dispute not found");
       }
 
+      const previousStatus = dispute.status;
       const updatedDispute = await disputeModel.updateDisputeStatus(
         disputeId,
         status,
         resolution,
         adminId,
-        adminName
+        adminName,
       );
 
-      const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
+      try {
+        await notifyDisputeAdminDecision(
+          updatedDispute,
+          previousStatus,
+          updatedDispute.status,
+          resolution,
+        );
+      } catch (notifyErr) {
+        console.error("Admin dispute resolve notification failed:", notifyErr);
+      }
 
-      // If resolving dispute, set project to DISPUTED and reject all milestones
+      const { PrismaClient } = await import("@prisma/client");
+// If resolving dispute, set project to DISPUTED and reject all milestones
       if (status === "RESOLVED") {
         // Set project status to DISPUTED
         await prisma.project.update({
@@ -129,40 +181,38 @@ export const disputeService = {
     }
   },
 
-  async simulateDisputePayout(disputeId, refundAmount, releaseAmount, resolution = null, adminId = null, adminName = null, bankTransferRefImageUrl = null) {
+  async simulateDisputePayout(
+    disputeId,
+    refundAmount,
+    releaseAmount,
+    resolution = null,
+    adminId = null,
+    adminName = null,
+    bankTransferRefImageUrl = null,
+    payoutOverride = null,
+  ) {
     try {
       const dispute = await disputeModel.getDisputeById(disputeId);
       if (!dispute) {
         throw new Error("Dispute not found");
       }
 
-      // Get the payment associated with this dispute
-      let paymentId = dispute.paymentId;
-      
+      const previousStatus = dispute.status;
+
       const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
-      
-      // If paymentId is null, try to find payment by milestoneId
-      if (!paymentId && dispute.milestoneId) {
-        const paymentByMilestone = await prisma.payment.findFirst({
-          where: {
-            milestoneId: dispute.milestoneId,
-            status: {
-              in: ["ESCROWED", "RELEASED"],
-            },
-          },
-          orderBy: {
-            createdAt: "desc", // Get the most recent payment for this milestone
-          },
+let paymentId = await findEscrowPaymentIdForDispute(dispute, prisma);
+
+      if (paymentId && !dispute.paymentId) {
+        await prisma.dispute.update({
+          where: { id: dispute.id },
+          data: { paymentId },
         });
-        
-        if (paymentByMilestone) {
-          paymentId = paymentByMilestone.id;
-        }
       }
-      
+
       if (!paymentId) {
-        throw new Error("No payment associated with this dispute. Payment must be created before processing refunds or releases.");
+        throw new Error(
+          "No ESCROWED payment found for this project. Customer funds must be in escrow for Stripe refund/release, or use “Resolve manually” to record offline payout instructions.",
+        );
       }
 
       // Get payment details
@@ -180,7 +230,9 @@ export const disputeService = {
 
       // Validate payment status
       if (payment.status !== "ESCROWED") {
-        throw new Error(`Cannot process payout for payment in ${payment.status} status. Payment must be ESCROWED.`);
+        throw new Error(
+          `Cannot process payout for payment in ${payment.status} status. Payment must be ESCROWED.`,
+        );
       }
 
       const refundAmt = refundAmount || 0;
@@ -193,7 +245,9 @@ export const disputeService = {
       }
 
       if (refundAmt + releaseAmt > totalAmount) {
-        throw new Error(`Total refund (${refundAmt}) + release (${releaseAmt}) cannot exceed payment amount (${totalAmount})`);
+        throw new Error(
+          `Total refund (${refundAmt}) + release (${releaseAmt}) cannot exceed payment amount (${totalAmount})`,
+        );
       }
 
       const payoutResult = {
@@ -213,7 +267,7 @@ export const disputeService = {
             paymentId,
             refundReason,
             adminId || "admin",
-            refundAmt < totalAmount ? refundAmt : null // Pass null for full refund
+            refundAmt < totalAmount ? refundAmt : null, // Pass null for full refund
           );
           payoutResult.refundId = refundResult.refund.id;
           payoutResult.refundStatus = "completed";
@@ -243,14 +297,19 @@ export const disputeService = {
             // Calculate the actual amount to release
             // If we did a partial refund, the payment amount was reduced
             // So we need to release based on the remaining amount
-            const actualReleaseAmount = refundAmt > 0 && refundAmt < totalAmount
-              ? Math.min(releaseAmt, updatedPayment.amount)
-              : releaseAmt;
+            const actualReleaseAmount =
+              refundAmt > 0 && refundAmt < totalAmount
+                ? Math.min(releaseAmt, updatedPayment.amount)
+                : releaseAmt;
 
             if (actualReleaseAmount > 0) {
-              await releasePaymentForDispute(paymentId, adminId || "admin");
+              await releasePaymentForDispute(
+                paymentId,
+                adminId || "admin",
+                payoutOverride,
+              );
               payoutResult.releaseStatus = "completed";
-              
+
               // Save bank transfer reference image URL to payment if provided (for release actions)
               if (bankTransferRefImageUrl) {
                 await prisma.payment.update({
@@ -271,7 +330,9 @@ export const disputeService = {
             // Payment already released (might have been released before)
             payoutResult.releaseStatus = "already_released";
           } else {
-            throw new Error(`Cannot release payment in ${updatedPayment.status} status`);
+            throw new Error(
+              `Cannot release payment in ${updatedPayment.status} status`,
+            );
           }
         } catch (releaseError) {
           console.error("Release error:", releaseError);
@@ -294,29 +355,49 @@ export const disputeService = {
       } else {
         autoResolutionNote = "Dispute resolved with no payment changes.";
       }
-      
+
       // Combine auto-generated note and admin's custom note into one resolution note
       let combinedResolutionNote = autoResolutionNote;
       if (resolution && resolution.trim()) {
         combinedResolutionNote = `${autoResolutionNote}\n\n--- Admin Note ---\n${resolution.trim()}`;
       }
-      
+
       // Update dispute status to RESOLVED with combined note
       const updatedDispute = await disputeModel.updateDisputeStatus(
         disputeId,
         "RESOLVED",
         combinedResolutionNote,
         adminId,
-        adminName
+        adminName,
       );
 
-      // When dispute is RESOLVED, set project to DISPUTED and reject ALL milestones
-      await prisma.project.update({
-        where: { id: dispute.projectId },
-        data: {
-          status: "DISPUTED",
-        },
-      });
+      try {
+        await notifyDisputeAdminDecision(
+          updatedDispute,
+          previousStatus,
+          "RESOLVED",
+          combinedResolutionNote,
+        );
+      } catch (notifyErr) {
+        console.error("Dispute payout notification failed:", notifyErr);
+      }
+
+      // Any escrow split (refund to customer and/or release to provider): dispute is settled — mark project completed
+      if (refundAmt > 0 || releaseAmt > 0) {
+        await prisma.project.update({
+          where: { id: dispute.projectId },
+          data: {
+            status: "COMPLETED",
+          },
+        });
+      } else {
+        await prisma.project.update({
+          where: { id: dispute.projectId },
+          data: {
+            status: "DISPUTED",
+          },
+        });
+      }
 
       // Reject ALL milestones for this project
       await prisma.milestone.updateMany({
@@ -336,24 +417,35 @@ export const disputeService = {
     }
   },
 
-  async redoMilestone(disputeId, resolution = null, adminId = null, adminName = null) {
+  async redoMilestone(
+    disputeId,
+    resolution = null,
+    adminId = null,
+    adminName = null,
+  ) {
     try {
-      const dispute = await disputeModel.getDisputeById(disputeId);
+      let dispute = await disputeModel.getDisputeById(disputeId);
+      if (!dispute) {
+        dispute = await disputeModel.getLatestDisputeByMilestoneId(disputeId);
+      }
       if (!dispute) {
         throw new Error("Dispute not found");
       }
 
-      // Check for milestoneId directly or through payment
-      const milestoneId = dispute.milestoneId || dispute.payment?.milestoneId;
-      
+      const resolvedDisputeId = dispute.id;
+      const previousStatus = dispute.status;
+
+      // Only the dispute row's milestoneId counts (project-level disputes keep it null).
+      const milestoneId = dispute.milestoneId;
+
       if (!milestoneId) {
-        throw new Error("No milestone associated with this dispute");
+        throw new Error(
+          "No milestone associated with this dispute. Use “Redo project” instead to resume work without a specific milestone.",
+        );
       }
 
       const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
-
-      // Update milestone status to IN_PROGRESS (mark as "Disputed — Needs Update")
+// Update milestone status to IN_PROGRESS (mark as "Disputed — Needs Update")
       const updatedMilestone = await prisma.milestone.update({
         where: { id: milestoneId },
         data: {
@@ -393,22 +485,34 @@ export const disputeService = {
       }
 
       // Build auto-generated resolution note
-      const autoResolutionNote = "Milestone returned to IN_PROGRESS for resubmission. Provider can now edit and resubmit. Payment remains in escrow.";
-      
+      const autoResolutionNote =
+        "Milestone returned to IN_PROGRESS for resubmission. Provider can now edit and resubmit. Payment remains in escrow. This dispute is closed.";
+
       // Combine auto-generated note and admin's custom note into one resolution note
       let combinedResolutionNote = autoResolutionNote;
       if (resolution && resolution.trim()) {
         combinedResolutionNote = `${autoResolutionNote}\n\n--- Admin Note ---\n${resolution.trim()}`;
       }
-      
-      // Update dispute status to UNDER_REVIEW with combined note
+
+      // Close dispute (same as redo project — allows a new dispute later if needed)
       const updatedDispute = await disputeModel.updateDisputeStatus(
-        disputeId,
-        "UNDER_REVIEW",
+        resolvedDisputeId,
+        "CLOSED",
         combinedResolutionNote,
         adminId,
-        adminName
+        adminName,
       );
+
+      try {
+        await notifyDisputeAdminDecision(
+          updatedDispute,
+          previousStatus,
+          "CLOSED",
+          combinedResolutionNote,
+        );
+      } catch (notifyErr) {
+        console.error("Dispute redo milestone notification failed:", notifyErr);
+      }
 
       return {
         success: true,
@@ -417,6 +521,156 @@ export const disputeService = {
       };
     } catch (error) {
       throw new Error(`Failed to redo milestone: ${error.message}`);
+    }
+  },
+
+  /**
+   * Project-level dispute (no milestone): close dispute and let both parties proceed.
+   * Sets project back to IN_PROGRESS so the company can pay milestones and work continues.
+   */
+  async redoProject(
+    disputeId,
+    resolution = null,
+    adminId = null,
+    adminName = null,
+  ) {
+    try {
+      const dispute = await disputeModel.getDisputeById(disputeId);
+      if (!dispute) {
+        throw new Error("Dispute not found");
+      }
+
+      if (dispute.milestoneId) {
+        throw new Error(
+          "This dispute is linked to a milestone. Use “Redo milestone” instead.",
+        );
+      }
+
+      const { PrismaClient } = await import("@prisma/client");
+const previousStatus = dispute.status;
+
+      const autoResolutionNote =
+        "Project dispute dismissed by admin. Both parties may proceed normally; the company may pay milestones and work may continue.";
+      let combinedResolutionNote = autoResolutionNote;
+      if (resolution && resolution.trim()) {
+        combinedResolutionNote = `${autoResolutionNote}\n\n--- Admin Note ---\n${resolution.trim()}`;
+      }
+
+      const updatedDispute = await disputeModel.updateDisputeStatus(
+        disputeId,
+        "CLOSED",
+        combinedResolutionNote,
+        adminId,
+        adminName,
+      );
+
+      await prisma.project.update({
+        where: { id: dispute.projectId },
+        data: {
+          status: "IN_PROGRESS",
+        },
+      });
+
+      try {
+        await notifyDisputeAdminDecision(
+          updatedDispute,
+          previousStatus,
+          "CLOSED",
+          combinedResolutionNote,
+        );
+      } catch (notifyErr) {
+        console.error("Dispute redo project notification failed:", notifyErr);
+      }
+
+      return {
+        success: true,
+        dispute: updatedDispute,
+      };
+    } catch (error) {
+      throw new Error(`Failed to redo project: ${error.message}`);
+    }
+  },
+
+  /**
+   * Resolve dispute without Stripe (no escrow row / offline payouts).
+   * Records admin instructions for where/how customer refund and provider payout are handled.
+   */
+  async manualResolveDispute(
+    disputeId,
+    {
+      resolution = "",
+      customerPayoutNote = "",
+      providerPayoutNote = "",
+      adminId = null,
+      adminName = null,
+    } = {},
+  ) {
+    try {
+      const dispute = await disputeModel.getDisputeById(disputeId);
+      if (!dispute) throw new Error("Dispute not found");
+
+      const previousStatus = dispute.status;
+      const parts = [];
+      if (resolution?.trim()) parts.push(resolution.trim());
+      if (customerPayoutNote?.trim()) {
+        parts.push(
+          `Customer refund / company-side decision: ${customerPayoutNote.trim()}`,
+        );
+      }
+      if (providerPayoutNote?.trim()) {
+        parts.push(
+          `Provider payout destination / instructions: ${providerPayoutNote.trim()}`,
+        );
+      }
+      if (parts.length === 0) {
+        throw new Error(
+          "Add a resolution summary and/or payout instructions (customer and/or provider).",
+        );
+      }
+      const combinedResolutionNote = [
+        "--- Manual resolution (no Stripe payout from this action) ---",
+        ...parts,
+      ].join("\n\n");
+
+      const updatedDispute = await disputeModel.updateDisputeStatus(
+        disputeId,
+        "RESOLVED",
+        combinedResolutionNote,
+        adminId,
+        adminName,
+      );
+
+      try {
+        await notifyDisputeAdminDecision(
+          updatedDispute,
+          previousStatus,
+          "RESOLVED",
+          combinedResolutionNote,
+        );
+      } catch (notifyErr) {
+        console.error("Manual dispute resolve notification failed:", notifyErr);
+      }
+
+      const { PrismaClient } = await import("@prisma/client");
+const hasCustomerPayoutNote = Boolean(customerPayoutNote?.trim());
+      const hasProviderPayoutNote = Boolean(providerPayoutNote?.trim());
+      // Mirror customer-only refund: provider-only payout instructions also close the project; both notes = fully settled
+      const shouldCompleteProject =
+        hasCustomerPayoutNote || hasProviderPayoutNote;
+      await prisma.project.update({
+        where: { id: dispute.projectId },
+        data: {
+          status: shouldCompleteProject ? "COMPLETED" : "DISPUTED",
+        },
+      });
+      await prisma.milestone.updateMany({
+        where: { projectId: dispute.projectId },
+        data: { status: "REJECTED" },
+      });
+
+      return { success: true, dispute: updatedDispute, manual: true };
+    } catch (error) {
+      throw new Error(`Failed to manually resolve dispute: ${error.message}`);
     }
   },
 
@@ -429,4 +683,3 @@ export const disputeService = {
     }
   },
 };
-

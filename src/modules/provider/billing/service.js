@@ -6,10 +6,8 @@ import {
   getTopClients,
   findPaymentWithFullDetails,
 } from "./model.js";
-// model.js
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { convertWithSnapshot, normalizeCurrencyCode } from "../../fx/service.js";
+import { prisma } from "../../../utils/prisma.js";
 
 export async function getProviderProfileIdByUserId(userId) {
   const profile = await prisma.providerProfile.findUnique({
@@ -86,9 +84,23 @@ export async function getEarningsOverview(userId, timeFilter = "this-month") {
   // 1. get provider projects
   const projects = await prisma.project.findMany({
     where: { providerId: userId },
-    select: { id: true, customerId: true, title: true },
+    select: {
+      id: true,
+      customerId: true,
+      title: true,
+      currencyCode: true,
+      fxSnapshotRatesJson: true,
+    },
   });
   const projectIds = projects.map((p) => p.id);
+  const projectMap = new Map(projects.map((p) => [p.id, p]));
+  const providerSettings = await prisma.settings.findUnique({
+    where: { userId },
+    select: { preferredCurrency: true },
+  });
+  const preferredCurrency =
+    normalizeCurrencyCode(providerSettings?.preferredCurrency || "MYR") ||
+    "MYR";
 
   // If provider has no projects, return empty defaults
   if (projectIds.length === 0) {
@@ -100,6 +112,7 @@ export async function getEarningsOverview(userId, timeFilter = "this-month") {
         pendingPayments: 0,
         availableBalance: 0,
         averageProjectValue: 0,
+        preferredCurrency: preferredCurrency || "MYR",
       },
       recentPayments: [],
       monthlyEarnings: [],
@@ -116,8 +129,26 @@ export async function getEarningsOverview(userId, timeFilter = "this-month") {
   const payments = await prisma.payment.findMany({
     where: { projectId: { in: projectIds } },
     include: {
-      project: { select: { id: true, title: true, customerId: true } },
-      milestone: { select: { id: true, title: true, status: true } },
+      project: {
+        select: {
+          id: true,
+          title: true,
+          customerId: true,
+          customer: {
+            select: {
+              name: true,
+              customerProfile: {
+                select: {
+                  profileImageUrl: true,
+                },
+              },
+            },
+          },
+          currencyCode: true,
+          fxSnapshotRatesJson: true,
+        },
+      },
+      milestone: { select: { id: true, title: true, status: true, amount: true } },
     },
     orderBy: { createdAt: "desc" },
     take: 200,
@@ -126,15 +157,52 @@ export async function getEarningsOverview(userId, timeFilter = "this-month") {
   // Normalize numeric values helper
   const toNum = (v) => (v == null ? 0 : Number(v));
 
+  const toPreferredCurrencyAmount = (payment, amount) => {
+    const project = payment.project || projectMap.get(payment.projectId);
+    const originalCurrency = normalizeCurrencyCode(
+      project?.currencyCode || payment.currency || "MYR",
+    );
+    const value = Number(amount || 0);
+    if (!Number.isFinite(value)) return 0;
+    if (originalCurrency === preferredCurrency) return value;
+    const converted = convertWithSnapshot({
+      amount: value,
+      fromCurrencyCode: originalCurrency,
+      toCurrencyCode: preferredCurrency,
+      ratesMap: project?.fxSnapshotRatesJson || null,
+    });
+    return converted == null ? value : Number(converted);
+  };
+
+  const getProviderDisplayAmountForPayment = (payment) => {
+    const providerFee = Number((toNum(payment.platformFeeAmount || 0) / 2).toFixed(2));
+    const milestoneSubtotal = Number.isFinite(Number(payment.milestone?.amount))
+      ? Number(Number(payment.milestone?.amount).toFixed(2))
+      : Number(
+          (
+            toNum(payment.providerAmount || payment.amount || 0) + providerFee
+          ).toFixed(2),
+        );
+    return Number((milestoneSubtotal - providerFee).toFixed(2));
+  };
+
   // 3. Totals & balances
-  // totalEarnings: sum of providerAmount for payments that were TRANSFERRED (or REFUNDED excluded)
+  // totalEarnings should be normalized to provider preferred currency.
   const totalEarnings = payments
     .filter((p) =>
       ["TRANSFERRED", "RELEASED", "REFUNDED"].includes(p.status)
         ? p.status !== "REFUNDED"
         : ["TRANSFERRED", "RELEASED"].includes(p.status)
     )
-    .reduce((s, p) => s + toNum(p.providerAmount || p.amount || 0), 0);
+    .reduce(
+      (s, p) =>
+        s +
+        toPreferredCurrencyAmount(
+          p,
+          toNum(p.providerAmount || p.amount || 0),
+        ),
+      0,
+    );
 
   // availableBalance: payments that are ESCROWED with milestone status APPROVED
   // These are payments that have been transferred and should be received from TechConnect platform
@@ -145,12 +213,20 @@ export async function getEarningsOverview(userId, timeFilter = "this-month") {
         p.milestone?.status === "APPROVED"
       );
     })
-    .reduce((s, p) => s + toNum(p.providerAmount || p.amount || 0), 0);
+    .reduce(
+      (s, p) =>
+        s + toPreferredCurrencyAmount(p, getProviderDisplayAmountForPayment(p)),
+      0,
+    );
 
   // pendingPayments: payments that are ESCROWED or PENDING (not yet released)
   const pendingPayments = payments
     .filter((p) => ["PENDING", "IN_PROGRESS", "ESCROWED"].includes(p.status))
-    .reduce((s, p) => s + toNum(p.providerAmount || p.amount || 0), 0);
+    .reduce(
+      (s, p) =>
+        s + toPreferredCurrencyAmount(p, getProviderDisplayAmountForPayment(p)),
+      0,
+    );
 
   // 4. thisMonth: sum providerAmount for payments released/transferred in current month
   const now = new Date();
@@ -170,7 +246,15 @@ export async function getEarningsOverview(userId, timeFilter = "this-month") {
         ["RELEASED", "TRANSFERRED"].includes(p.status)
       );
     })
-    .reduce((s, p) => s + toNum(p.providerAmount || p.amount || 0), 0);
+    .reduce(
+      (s, p) =>
+        s +
+        toPreferredCurrencyAmount(
+          p,
+          toNum(p.providerAmount || p.amount || 0),
+        ),
+      0,
+    );
 
   // 5. monthlyGrowth: compare thisMonth vs previous month
   const prevMonthStart = new Date(curYear, curMonth - 1, 1);
@@ -186,7 +270,15 @@ export async function getEarningsOverview(userId, timeFilter = "this-month") {
         ["RELEASED", "TRANSFERRED"].includes(p.status)
       );
     })
-    .reduce((s, p) => s + toNum(p.providerAmount || p.amount || 0), 0);
+    .reduce(
+      (s, p) =>
+        s +
+        toPreferredCurrencyAmount(
+          p,
+          toNum(p.providerAmount || p.amount || 0),
+        ),
+      0,
+    );
 
   const monthlyGrowth =
     prevMonthTotal === 0
@@ -197,13 +289,39 @@ export async function getEarningsOverview(userId, timeFilter = "this-month") {
 
   // 6. recentPayments mapping for UI (slice to 20)
   const recentPayments = payments.slice(0, 20).map((p) => ({
+    // Resolve original/project currency first for legacy rows.
+    ...(() => {
+      const project = p.project || projectMap.get(p.projectId);
+      const originalCurrency = normalizeCurrencyCode(
+        project?.currencyCode || p.currency || "MYR",
+      );
+      const ratesMap = project?.fxSnapshotRatesJson || null;
+      const originalAmount = getProviderDisplayAmountForPayment(p);
+      const preferredAmount =
+        originalCurrency === preferredCurrency
+          ? originalAmount
+          : convertWithSnapshot({
+              amount: originalAmount,
+              fromCurrencyCode: originalCurrency,
+              toCurrencyCode: preferredCurrency,
+              ratesMap,
+            });
+      return {
+        originalAmount: Number(originalAmount.toFixed(2)),
+        originalCurrency,
+        preferredAmount:
+          preferredAmount == null ? null : Number(Number(preferredAmount).toFixed(2)),
+        preferredCurrency,
+      };
+    })(),
     id: p.id,
     project: p.project?.title || "Unknown project",
     clientId: p.project?.customerId || null,
-    client: p.project?.customerId || "Client",
+    client: p.project?.customer?.name || "Client",
+    avatar: p.project?.customer?.customerProfile?.profileImageUrl || null,
     milestone: p.milestone?.title || null,
-    amount: toNum(p.providerAmount || p.amount || 0),
-    currency: p.currency,
+    amount: getProviderDisplayAmountForPayment(p),
+    currency: normalizeCurrencyCode(p.currency || "MYR"),
     status: p.status,
     date:
       p.releasedAt || p.createdAt || p.updatedAt
@@ -238,10 +356,15 @@ export async function getEarningsOverview(userId, timeFilter = "this-month") {
           ["RELEASED", "TRANSFERRED"].includes(p.status)
         );
       })
-      .reduce((s, p) => s + toNum(p.providerAmount || p.amount || 0), 0);
+      .reduce(
+        (s, p) =>
+          s + toPreferredCurrencyAmount(p, getProviderDisplayAmountForPayment(p)),
+        0,
+      );
 
     monthlyEarnings.push({
       month: start.toLocaleString("en-US", { month: "short", year: "numeric" }), // e.g. "Nov 2025"
+      monthStartIso: start.toISOString(),
       amount,
       projects: payments.filter((p) => {
         const date = p.releasedAt || p.createdAt || p.updatedAt;
@@ -260,7 +383,10 @@ export async function getEarningsOverview(userId, timeFilter = "this-month") {
   const clientMap = new Map();
   for (const p of payments) {
     const cid = p.project?.customerId || "unknown";
-    const amt = toNum(p.providerAmount || p.amount || 0);
+    const amt = toPreferredCurrencyAmount(
+      p,
+      getProviderDisplayAmountForPayment(p),
+    );
     if (!clientMap.has(cid))
       clientMap.set(cid, { clientId: cid, totalPaid: 0, projects: new Set() });
     const rec = clientMap.get(cid);
@@ -279,12 +405,13 @@ export async function getEarningsOverview(userId, timeFilter = "this-month") {
 
   // 9. quickStats
   const averageProjectValue = (() => {
-    const projectSums = new Map(); // projectId -> total provider amount
+    const projectSums = new Map(); // projectId -> total provider amount (preferred currency)
     for (const p of payments) {
       const pid = p.projectId;
       projectSums.set(
         pid,
-        (projectSums.get(pid) || 0) + toNum(p.providerAmount || p.amount || 0)
+        (projectSums.get(pid) || 0) +
+          toPreferredCurrencyAmount(p, getProviderDisplayAmountForPayment(p))
       );
     }
     const vals = Array.from(projectSums.values());
@@ -328,6 +455,7 @@ export async function getEarningsOverview(userId, timeFilter = "this-month") {
   const payload = {
     earningsData: {
       totalEarnings: Number(totalEarnings.toFixed(2)),
+      preferredCurrency,
       thisMonth: Number(thisMonth.toFixed(2)),
       monthlyGrowth: Number(monthlyGrowth.toFixed(2)),
       pendingPayments: Number(pendingPayments.toFixed(2)),

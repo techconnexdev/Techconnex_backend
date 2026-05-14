@@ -1,8 +1,5 @@
+import { prisma } from "../../utils/prisma.js";
 // src/modules/company/auth/model.js
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
 // User queries
 async function findUserByEmail(email) {
   return prisma.user.findUnique({
@@ -17,6 +14,21 @@ async function findUserById(id) {
   return prisma.user.findUnique({ where: { id } });
 }
 
+/** Match stored phone whether saved with or without leading + */
+async function findUserByPhoneVariants(e164) {
+  const withPlus = String(e164).trim().startsWith("+")
+    ? String(e164).trim()
+    : `+${String(e164).replace(/\D/g, "")}`;
+  const noPlus = withPlus.replace(/^\+/, "");
+  const variants = [...new Set([withPlus, noPlus])];
+  return prisma.user.findFirst({
+    where: { OR: variants.map((phone) => ({ phone })) },
+    include: {
+      settings: true,
+    },
+  });
+}
+
 // Provider profile queries
 async function findProviderProfile(userId) {
   return prisma.providerProfile.findUnique({ where: { userId } });
@@ -29,4 +41,10 @@ async function updateUserPassword(userId, hashedPassword) {
   });
 }
 
-export { findUserByEmail, findUserById, findProviderProfile, updateUserPassword };
+export {
+  findUserByEmail,
+  findUserById,
+  findUserByPhoneVariants,
+  findProviderProfile,
+  updateUserPassword,
+};

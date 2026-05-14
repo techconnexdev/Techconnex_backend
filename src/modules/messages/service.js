@@ -1,8 +1,5 @@
 import * as messageModel from "./model.js";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
+import { prisma } from "../../utils/prisma.js";
 export const fetchUserMessages = async (userId, otherUserId = null) => {
   if (!userId) {
     throw new Error("User ID is required");

@@ -1,10 +1,8 @@
 import multer from "multer";
 import path from "path";
-import { PrismaClient } from "@prisma/client";
+
 import { uploadFileToR2, generateFileKey, getPublicUrl } from "../utils/r2.js";
-
-const prisma = new PrismaClient();
-
+import { prisma } from "../utils/prisma.js";
 // File filter: allow only image types and PDF
 const allowedMime = [
   "image/jpeg",

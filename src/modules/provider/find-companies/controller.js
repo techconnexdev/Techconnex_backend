@@ -13,6 +13,14 @@ import {
   getAiDraftsService,
 } from "./service.js";
 import { FindCompaniesDto, SaveCompanyDto, CompanyDetailDto } from "./dto.js";
+import { prisma } from "../../../utils/prisma.js";
+
+function sanitizeLocale(locale) {
+  const code = String(locale || "en").trim().toLowerCase();
+  if (code.startsWith("id")) return "id";
+  if (code.startsWith("ar")) return "ar";
+  return "en";
+}
 
 // GET /api/companies - Search and filter companies
 export async function findCompanies(req, res) {
@@ -278,7 +286,20 @@ export async function getAiDraftsController(req, res) {
         .filter(Boolean);
     }
 
-    const drafts = await getAiDraftsService(referenceIds);
+    const queryLocale =
+      typeof req.query?.lang === "string" && req.query.lang.trim()
+        ? req.query.lang.trim().toLowerCase()
+        : "";
+    const requesterId = req.user?.userId || req.user?.id;
+    const settings = requesterId
+      ? await prisma.settings.findUnique({
+          where: { userId: requesterId },
+          select: { locale: true },
+        })
+      : null;
+    const locale = sanitizeLocale(queryLocale || settings?.locale || "en");
+
+    const drafts = await getAiDraftsService(referenceIds, locale);
 
     res.json({ success: true, drafts });
   } catch (error) {

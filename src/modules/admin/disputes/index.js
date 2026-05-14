@@ -32,5 +32,7 @@ router.post(
   disputeController.simulatePayout
 );
 router.post("/:id/redo-milestone", disputeController.redoMilestone);
+router.post("/:id/redo-project", disputeController.redoProject);
+router.post("/:id/manual-resolve", disputeController.manualResolveDispute);
 
 export default router;

@@ -1,6 +1,89 @@
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { prisma } from "../../../utils/prisma.js";
+/** Shared include for admin dispute detail + redo / payout flows */
+const disputeAdminDetailInclude = {
+  payment: {
+    include: {
+      milestone: {
+        include: {
+          project: {
+            include: {
+              customer: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                },
+              },
+              provider: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  providerProfile: {
+                    include: {
+                      payoutMethods: {
+                        orderBy: {
+                          createdAt: "desc",
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+  project: {
+    include: {
+      customer: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+        },
+      },
+      provider: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          providerProfile: {
+            include: {
+              payoutMethods: {
+                orderBy: {
+                  createdAt: "desc",
+                },
+              },
+            },
+          },
+        },
+      },
+      milestones: {
+        orderBy: {
+          order: "asc",
+        },
+      },
+    },
+  },
+  milestone: {
+    select: {
+      id: true,
+      title: true,
+      amount: true,
+      status: true,
+    },
+  },
+  raisedBy: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+    },
+  },
+};
 
 export const disputeModel = {
   async getAllDisputes(filters = {}) {
@@ -138,95 +221,26 @@ export const disputeModel = {
   },
 
   async getDisputeById(disputeId) {
-    const dispute = await prisma.dispute.findUnique({
+    if (!disputeId) return null;
+    return prisma.dispute.findUnique({
       where: { id: disputeId },
-      include: {
-        payment: {
-          include: {
-            milestone: {
-              include: {
-                project: {
-                  include: {
-                    customer: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                      },
-                    },
-                    provider: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        providerProfile: {
-                          include: {
-                            payoutMethods: {
-                              orderBy: {
-                                createdAt: "desc",
-                              },
-                            },
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-        project: {
-          include: {
-            customer: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-              },
-            },
-            provider: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                providerProfile: {
-                  include: {
-                    payoutMethods: {
-                      orderBy: {
-                        createdAt: "desc",
-                      },
-                    },
-                  },
-                },
-              },
-            },
-            milestones: {
-              orderBy: {
-                order: "asc",
-              },
-            },
-          },
-        },
-        milestone: {
-          select: {
-            id: true,
-            title: true,
-            amount: true,
-            status: true,
-          },
-        },
-        raisedBy: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-      },
+      include: disputeAdminDetailInclude,
     });
+  },
 
-    return dispute;
+  /**
+   * Legacy/alternate clients may call redo with milestone UUID; resolve latest open dispute on that milestone.
+   */
+  async getLatestDisputeByMilestoneId(milestoneId) {
+    if (!milestoneId) return null;
+    return prisma.dispute.findFirst({
+      where: {
+        milestoneId,
+        status: { notIn: ["CLOSED", "RESOLVED"] },
+      },
+      orderBy: { createdAt: "desc" },
+      include: disputeAdminDetailInclude,
+    });
   },
 
   async updateDisputeStatus(disputeId, status, resolution = null, adminId = null, adminName = null) {

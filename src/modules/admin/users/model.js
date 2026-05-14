@@ -1,6 +1,13 @@
-import { PrismaClient, Prisma } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { Prisma } from "@prisma/client";
+import { prisma } from "../../../utils/prisma.js";
+function mapUserWithEffectiveStatus(user) {
+  if (!user) return user;
+  const isDeleted = Boolean(user.settings?.deletedAt);
+  return {
+    ...user,
+    status: isDeleted ? "DELETED" : user.status,
+  };
+}
 
 /** Coerce value to number or null. */
 function toNumberOrNull(v) {
@@ -109,7 +116,16 @@ export const userModel = {
 
     // Filter by status
     if (filters.status && filters.status !== "all") {
-      where.status = filters.status.toUpperCase();
+      const normalizedStatus = filters.status.toUpperCase();
+      if (normalizedStatus === "DELETED") {
+        where.settings = { is: { deletedAt: { not: null } } };
+      } else {
+        where.status = normalizedStatus;
+        if (normalizedStatus === "ACTIVE") {
+          // Soft-deleted users keep user.status as ACTIVE; exclude them here.
+          where.settings = { is: { deletedAt: null } };
+        }
+      }
     }
 
     // Search by name or email
@@ -123,6 +139,11 @@ export const userModel = {
     const users = await prisma.user.findMany({
       where,
       include: {
+        settings: {
+          select: {
+            deletedAt: true,
+          },
+        },
         providerProfile: {
           select: {
             id: true,
@@ -186,13 +207,18 @@ export const userModel = {
       },
     });
 
-    return users;
+    return users.map(mapUserWithEffectiveStatus);
   },
 
   async getUserById(userId) {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       include: {
+        settings: {
+          select: {
+            deletedAt: true,
+          },
+        },
         providerProfile: {
           include: {
             certifications: {
@@ -202,6 +228,9 @@ export const userModel = {
               orderBy: { date: "desc" },
             },
             performance: true,
+            payoutMethods: {
+              orderBy: { createdAt: "desc" },
+            },
           },
         },
         customerProfile: true,
@@ -275,7 +304,15 @@ export const userModel = {
       },
     });
 
-    return user;
+    return mapUserWithEffectiveStatus(user);
+  },
+
+  async restoreSoftDeletedUser(userId) {
+    await prisma.settings.update({
+      where: { userId },
+      data: { deletedAt: null },
+    });
+    return userModel.getUserById(userId);
   },
 
   async updateUserStatus(userId, status) {
@@ -283,6 +320,11 @@ export const userModel = {
       where: { id: userId },
       data: { status },
       include: {
+        settings: {
+          select: {
+            deletedAt: true,
+          },
+        },
         providerProfile: {
           select: {
             id: true,
@@ -316,7 +358,7 @@ export const userModel = {
       },
     });
 
-    return user;
+    return mapUserWithEffectiveStatus(user);
   },
 
   async updateUser(userId, updateData) {
@@ -376,6 +418,11 @@ export const userModel = {
       return await tx.user.findUnique({
         where: { id: userId },
         include: {
+          settings: {
+            select: {
+              deletedAt: true,
+            },
+          },
           providerProfile: {
             include: {
               certifications: {
@@ -385,6 +432,9 @@ export const userModel = {
                 orderBy: { date: "desc" },
               },
               performance: true,
+              payoutMethods: {
+                orderBy: { createdAt: "desc" },
+              },
             },
           },
           customerProfile: true,
@@ -392,7 +442,7 @@ export const userModel = {
       });
     });
 
-    return user;
+    return mapUserWithEffectiveStatus(user);
   },
 
   async getUserStats() {
@@ -405,7 +455,12 @@ export const userModel = {
       admins,
     ] = await Promise.all([
       prisma.user.count(),
-      prisma.user.count({ where: { status: "ACTIVE" } }),
+      prisma.user.count({
+        where: {
+          status: "ACTIVE",
+          settings: { is: { deletedAt: null } },
+        },
+      }),
       prisma.user.count({ where: { status: "SUSPENDED" } }),
       prisma.user.count({ where: { role: { has: "PROVIDER" } } }),
       prisma.user.count({ where: { role: { has: "CUSTOMER" } } }),

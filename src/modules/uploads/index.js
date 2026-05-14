@@ -2,6 +2,7 @@
 import express from "express";
 import { authenticateToken } from "../../middlewares/auth.js";
 import jwt from "jsonwebtoken";
+import { prisma } from "../../utils/prisma.js";
 import {
   generatePresignedUploadUrl,
   generateFileKey,
@@ -9,11 +10,8 @@ import {
   getPublicUrl,
   generatePresignedDownloadUrl,
 } from "../../utils/r2.js";
-import { PrismaClient } from "@prisma/client";
 
 const router = express.Router();
-const prisma = new PrismaClient();
-
 // Optional authentication middleware (for registration flows)
 const optionalAuthenticate = (req, res, next) => {
   const authHeader = req.headers["authorization"];

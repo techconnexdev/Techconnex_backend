@@ -2,6 +2,9 @@
 import { FRIENDLY_500_MESSAGE } from "../../../utils/errors.js";
 import { generateReceiptPDF } from "../../../utils/receiptPdf.js";
 import { createProviderEarningsPDF } from "../../../utils/providerEarningsReportPdf.js";
+import { prisma } from "../../../utils/prisma.js";
+import { normalizeReportLocale } from "../../../utils/reportPdfI18n.js";
+import { normalizeCurrencyCode } from "../../fx/service.js";
 import {
   uploadFileToR2,
   generateFileKey,
@@ -79,6 +82,10 @@ export const downloadReceipt = async (req, res, next) => {
   try {
     const { paymentId } = req.params;
     const userId = req.user?.id;
+    const locale =
+      typeof req.query?.lang === "string" && req.query.lang.trim()
+        ? req.query.lang.trim().toLowerCase()
+        : "en";
 
     if (!userId) {
       return res.status(401).json({
@@ -91,7 +98,8 @@ export const downloadReceipt = async (req, res, next) => {
     // Format: receipts/{userId}/receipt-{paymentId}.pdf
     // This ensures the same payment always uses the same key
     const sanitizedPaymentId = paymentId.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const r2Key = `receipts/${userId}/receipt-${sanitizedPaymentId}.pdf`;
+    const safeLocale = locale.replace(/[^a-z-]/g, "").slice(0, 8) || "en";
+    const r2Key = `receipts/${userId}/receipt-${sanitizedPaymentId}-${safeLocale}.pdf`;
 
     // Check if file already exists in R2
     let downloadUrl;
@@ -103,7 +111,7 @@ export const downloadReceipt = async (req, res, next) => {
       const payment = await getPaymentDetailsService(paymentId);
 
       // Generate PDF buffer
-      const pdfBuffer = await generateReceiptPDF(payment);
+      const pdfBuffer = await generateReceiptPDF(payment, { locale: safeLocale });
 
       // Upload PDF buffer to R2
       await uploadFileToR2(pdfBuffer, r2Key, "application/pdf");
@@ -225,11 +233,32 @@ export const exportEarningsReport = async (req, res) => {
     }
 
     const timeFilter = req.query.timeFilter || "this-month";
+    const queryLocale =
+      typeof req.query?.lang === "string" && req.query.lang.trim()
+        ? req.query.lang.trim()
+        : "";
+    const queryCurrency =
+      typeof req.query?.currency === "string" && req.query.currency.trim()
+        ? req.query.currency.trim().toUpperCase()
+        : "";
 
-    // Fetch earnings overview data
+    const userSettings = await prisma.settings.findUnique({
+      where: { userId },
+      select: { locale: true, preferredCurrency: true },
+    });
+
+    const resolvedLocale = normalizeReportLocale(
+      queryLocale || userSettings?.locale || "en",
+    );
+    const fromSettings =
+      normalizeCurrencyCode(userSettings?.preferredCurrency || "MYR") || "MYR";
+    const resolvedCurrency =
+      queryCurrency && /^[A-Z]{3}$/.test(queryCurrency)
+        ? queryCurrency
+        : fromSettings;
+
     const earningsData = await getEarningsOverview(userId, timeFilter);
 
-    // Generate PDF buffer
     const pdfBuffer = await createProviderEarningsPDF({
       earningsData: earningsData.earningsData,
       recentPayments: earningsData.recentPayments || [],
@@ -237,7 +266,9 @@ export const exportEarningsReport = async (req, res) => {
       topClients: earningsData.topClients || [],
       quickStats: earningsData.quickStats || {},
       generatedFor: userId,
-      generatedAt: new Date().toLocaleString(),
+      generatedAt: new Date(),
+      locale: resolvedLocale,
+      displayCurrency: resolvedCurrency,
     });
 
     // Generate R2 key for the report

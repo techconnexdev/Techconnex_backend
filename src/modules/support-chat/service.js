@@ -1,13 +1,11 @@
-import { PrismaClient } from "@prisma/client";
+
 import { ChatOpenAI } from "@langchain/openai";
 import { PromptTemplate } from "@langchain/core/prompts";
 import { RunnableSequence } from "@langchain/core/runnables";
 import { searchRelevantChunks } from "./rag-service.js";
 import { needsHumanHandoff, HANDOFF_MESSAGE } from "./handoff.js";
 import { sendEmail } from "../auth/sendEmail.js";
-
-const prisma = new PrismaClient();
-
+import { prisma } from "../../utils/prisma.js";
 /**
  * Fetch user context (name + role) for AI personalization. Detects provider vs company (CUSTOMER).
  * Returns { displayName, primaryRole, roleDescription } for use in prompts.

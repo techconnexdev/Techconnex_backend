@@ -2,7 +2,14 @@
 import ProviderProfileModel from "./model.js";
 import { ProviderProfileDto, ProviderProfileResponseDto } from "./dto.js";
 import { updateProviderInRecommendationsCache } from "../../company/find-providers/recommended-service.js";
+import { invalidateRecommendationsCache } from "../../provider/opportunities/recommended-service.js";
+import {
+  profilePayloadTouchesPricing,
+  upsertSettingsPreferredCurrency,
+  syncProviderProfilePricingFx,
+} from "./pricing-fx.js";
 
+import { prisma } from "../../../utils/prisma.js";
 class ProviderProfileService {
   // Get provider profile by user ID
   static async getProfile(userId) {
@@ -13,15 +20,19 @@ class ProviderProfileService {
         throw new Error("Provider profile not found");
       }
 
-      // Calculate completion percentage
-      const completion = await ProviderProfileModel.getProfileCompletion(userId);
-      
-      // Format response using DTO
+      const completionData = await ProviderProfileModel.getProfileCompletion(userId);
+
+      const settingsRow = await prisma.settings.findUnique({
+        where: { userId },
+        select: { preferredCurrency: true },
+      });
+
       const responseDto = new ProviderProfileResponseDto({
         ...profile,
-        completion,
+        completion: completionData.completion,
+        preferredCurrency: settingsRow?.preferredCurrency || "MYR",
       });
-      
+
       return responseDto.toResponse();
     } catch (error) {
       throw new Error(`Failed to get provider profile: ${error.message}`);
@@ -41,16 +52,42 @@ class ProviderProfileService {
         throw new Error("Provider profile already exists for this user");
       }
 
-      // Create profile
-      const profile = await ProviderProfileModel.createProfile(userId, dto.toUpdateData());
+      const createData = dto.toUpdateData();
+      const profile = await ProviderProfileModel.createProfile(userId, createData);
+
+      if (
+        profilePayloadTouchesPricing(profileData) ||
+        profileData.preferredCurrency != null
+      ) {
+        if (
+          profileData.preferredCurrency != null &&
+          String(profileData.preferredCurrency).trim() !== ""
+        ) {
+          await upsertSettingsPreferredCurrency(
+            userId,
+            profileData.preferredCurrency,
+          );
+          invalidateRecommendationsCache(userId);
+        }
+        await syncProviderProfilePricingFx(userId);
+      }
+
+      const profileFresh = await ProviderProfileModel.getProfileByUserId(userId);
+      const settingsRow = await prisma.settings.findUnique({
+        where: { userId },
+        select: { preferredCurrency: true },
+      });
 
       // Update completion percentage
       const completion = await ProviderProfileModel.updateProfileCompletion(userId);
 
-      return {
-        ...profile,
+      const responseDto = new ProviderProfileResponseDto({
+        ...profileFresh,
         completion,
-      };
+        preferredCurrency: settingsRow?.preferredCurrency || "MYR",
+      });
+
+      return responseDto.toResponse();
     } catch (error) {
       throw new Error(`Failed to create provider profile: ${error.message}`);
     }
@@ -73,10 +110,29 @@ class ProviderProfileService {
         updateProviderInRecommendationsCache(userId, {
           avatar: profile.profileImageUrl,
         });
-        return {
+        const settingsRow = await prisma.settings.findUnique({
+          where: { userId },
+          select: { preferredCurrency: true },
+        });
+        const completionNum = await ProviderProfileModel.updateProfileCompletion(
+          userId,
+        );
+        return new ProviderProfileResponseDto({
           ...profile,
-          completion: await ProviderProfileModel.getProfileCompletion(userId),
-        };
+          completion: completionNum,
+          preferredCurrency: settingsRow?.preferredCurrency || "MYR",
+        }).toResponse();
+      }
+
+      if (
+        profileData.preferredCurrency != null &&
+        String(profileData.preferredCurrency).trim() !== ""
+      ) {
+        await upsertSettingsPreferredCurrency(
+          userId,
+          profileData.preferredCurrency,
+        );
+        invalidateRecommendationsCache(userId);
       }
 
       // Validate input data for full updates
@@ -86,29 +142,40 @@ class ProviderProfileService {
       // Update profile
       const profile = await ProviderProfileModel.updateProfile(userId, dto.toUpdateData());
 
+      if (profilePayloadTouchesPricing(profileData)) {
+        await syncProviderProfilePricingFx(userId);
+      }
+
+      const profileFresh = await ProviderProfileModel.getProfileByUserId(userId);
+      const settingsRow = await prisma.settings.findUnique({
+        where: { userId },
+        select: { preferredCurrency: true },
+      });
+
       // Patch provider in recommendations cache (keeps AI explanations, updates mutable fields)
       updateProviderInRecommendationsCache(userId, {
-        availability: profile.availability,
-        hourlyRate: profile.hourlyRate,
-        location: profile.location,
-        bio: profile.bio,
-        skills: profile.skills,
-        yearsExperience: profile.yearsExperience,
-        minimumProjectBudget: profile.minimumProjectBudget,
-        maximumProjectBudget: profile.maximumProjectBudget,
-        preferredProjectDuration: profile.preferredProjectDuration,
-        workPreference: profile.workPreference,
-        successRate: profile.successRate,
-        avatar: profile.profileImageUrl,
+        availability: profileFresh.availability,
+        hourlyRate: profileFresh.hourlyRate,
+        location: profileFresh.location,
+        bio: profileFresh.bio,
+        skills: profileFresh.skills,
+        yearsExperience: profileFresh.yearsExperience,
+        minimumProjectBudget: profileFresh.minimumProjectBudget,
+        maximumProjectBudget: profileFresh.maximumProjectBudget,
+        preferredProjectDuration: profileFresh.preferredProjectDuration,
+        workPreference: profileFresh.workPreference,
+        successRate: profileFresh.successRate,
+        avatar: profileFresh.profileImageUrl,
       });
 
       // Update completion percentage
       const completion = await ProviderProfileModel.updateProfileCompletion(userId);
 
-      return {
-        ...profile,
+      return new ProviderProfileResponseDto({
+        ...profileFresh,
         completion,
-      };
+        preferredCurrency: settingsRow?.preferredCurrency || "MYR",
+      }).toResponse();
     } catch (error) {
       throw new Error(`Failed to update provider profile: ${error.message}`);
     }
@@ -117,23 +184,55 @@ class ProviderProfileService {
   // Upsert provider profile (create or update)
   static async upsertProfile(userId, profileData) {
     try {
-      // Extract portfolioUrls and phone (phone is on User, not ProviderProfile)
-      const { portfolioUrls, phone, ...restProfileData } = profileData;
+      // Extract portfolioUrls, phone, email, preferredCurrency (currency lives on Settings)
+      const { portfolioUrls, phone, email, preferredCurrency, ...restProfileData } =
+        profileData;
+
+      if (
+        preferredCurrency != null &&
+        String(preferredCurrency).trim() !== ""
+      ) {
+        await upsertSettingsPreferredCurrency(userId, preferredCurrency);
+        invalidateRecommendationsCache(userId);
+      }
 
       // Validate input data (partial validation for upsert)
       const dto = new ProviderProfileDto(restProfileData);
       dto.validatePartial();
 
       // Upsert profile (portfolioUrls is handled separately via portfolios relation if needed)
-      const profile = await ProviderProfileModel.upsertProfile(userId, dto.toUpdateData());
+      let profile = await ProviderProfileModel.upsertProfile(
+        userId,
+        dto.toUpdateData(),
+      );
 
-      // If phone provided and user has no phone yet, set it (edit profile can add phone once)
-      if (phone != null && String(phone).trim() !== "") {
-        const updatedUser = await ProviderProfileModel.updateUserPhoneIfEmpty(userId, phone);
+      if (profilePayloadTouchesPricing(profileData)) {
+        await syncProviderProfilePricingFx(userId);
+        profile = await ProviderProfileModel.getProfileByUserId(userId);
+      }
+
+
+      if (email != null && String(email).trim() !== "") {
+        const updatedUser = await ProviderProfileModel.updateUserEmail(userId, email);
         if (updatedUser && profile.user) {
-          profile.user = { ...profile.user, phone: updatedUser.phone };
+          profile.user = { ...profile.user, email: updatedUser.email };
         }
       }
+      if (phone != null && String(phone).trim() !== "") {
+        const updatedUser = await ProviderProfileModel.updateUserPhone(userId, phone);
+        if (updatedUser && profile.user) {
+          profile.user = {
+            ...profile.user,
+            phone: updatedUser.phone,
+            phoneVerified: updatedUser.phoneVerified,
+          };
+        }
+      }
+
+      const settingsRow = await prisma.settings.findUnique({
+        where: { userId },
+        select: { preferredCurrency: true },
+      });
 
       // Patch provider in recommendations cache (keeps AI explanations, updates mutable fields)
       updateProviderInRecommendationsCache(userId, {
@@ -154,10 +253,11 @@ class ProviderProfileService {
       // Update completion percentage
       const completion = await ProviderProfileModel.updateProfileCompletion(userId);
 
-      return {
+      return new ProviderProfileResponseDto({
         ...profile,
         completion,
-      };
+        preferredCurrency: settingsRow?.preferredCurrency || "MYR",
+      }).toResponse();
     } catch (error) {
       throw new Error(`Failed to upsert provider profile: ${error.message}`);
     }
@@ -188,9 +288,7 @@ class ProviderProfileService {
     try {
       // Import PrismaClient and create instance
       const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
-      
-      const projects = await prisma.project.findMany({
+const projects = await prisma.project.findMany({
         where: {
           providerId: userId,
           status: "COMPLETED",
@@ -260,9 +358,7 @@ class ProviderProfileService {
   static async getPortfolioItems(userId) {
     try {
       const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
-
-      // First get the provider profile to get profileId
+// First get the provider profile to get profileId
       const profile = await prisma.providerProfile.findUnique({
         where: { userId },
         select: { id: true },
@@ -288,9 +384,7 @@ class ProviderProfileService {
   static async createPortfolioItem(userId, portfolioData) {
     try {
       const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
-
-      // Validate required fields
+// Validate required fields
       if (!portfolioData.title || !portfolioData.description || !portfolioData.date) {
         throw new Error("Title, description, and date are required");
       }
@@ -332,9 +426,7 @@ class ProviderProfileService {
   static async updatePortfolioItem(userId, portfolioId, portfolioData) {
     try {
       const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
-
-      // Get the provider profile to verify ownership
+// Get the provider profile to verify ownership
       const profile = await prisma.providerProfile.findUnique({
         where: { userId },
         select: { id: true },
@@ -382,9 +474,7 @@ class ProviderProfileService {
   static async deletePortfolioItem(userId, portfolioId) {
     try {
       const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
-
-      // Get the provider profile to verify ownership
+// Get the provider profile to verify ownership
       const profile = await prisma.providerProfile.findUnique({
         where: { userId },
         select: { id: true },
@@ -419,6 +509,5 @@ class ProviderProfileService {
   }
 
 }
-
 
 export default ProviderProfileService;

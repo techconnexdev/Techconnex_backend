@@ -1,6 +1,7 @@
 import express from "express";
 import {
   initiatePayment,
+  verifyPaymentReturn,
   releasePayment,
   confirmTransfer,
   refundPaymentController,
@@ -26,6 +27,7 @@ router.use(authenticateToken); // Apply auth middleware to all routes below
 
 // Customer routes
 router.post("/initiate", initiatePayment); // Customer pays for milestone
+router.get("/verify-return", verifyPaymentReturn); // Post-redirect payment status (poll until ESCROWED)
 router.get("/history", getPaymentHistory); // Get payment history
 
 // Admin/Customer routes (approve milestone and release payment)

@@ -1,6 +1,13 @@
+import fs from "fs/promises";
 import multer from "multer";
 import path from "path";
-import { uploadFileToR2, generateFileKey, getPublicUrl } from "../utils/r2.js";
+import {
+  uploadFileToR2,
+  generateFileKey,
+  getPublicUrl,
+  r2Client,
+  R2_BUCKET,
+} from "../utils/r2.js";
 
 // File filter: allow common file types for messages
 const allowedMime = [
@@ -54,6 +61,19 @@ export const uploadMessageAttachment = async (req, res, next) => {
   // Use multer to handle file upload (stores in memory)
   upload.single("file")(req, res, async (err) => {
     if (err) {
+      if (err instanceof multer.MulterError) {
+        if (err.code === "LIMIT_FILE_SIZE") {
+          err.status = 400;
+          err.message = "File is too large (maximum 25 MB for chat attachments).";
+        } else {
+          err.status = 400;
+        }
+      } else if (
+        typeof err.message === "string" &&
+        err.message.includes("File type not allowed")
+      ) {
+        err.status = 400;
+      }
       return next(err);
     }
 
@@ -82,28 +102,42 @@ export const uploadMessageAttachment = async (req, res, next) => {
         userId
       );
 
-      // Upload file buffer to R2
-      await uploadFileToR2(req.file.buffer, r2Key, req.file.mimetype);
+      const useR2 = Boolean(r2Client && R2_BUCKET);
 
-      // Get public URL or use the key (depending on your R2 setup)
-      let r2Url;
-      try {
-        r2Url = getPublicUrl(r2Key);
-      } catch (error) {
-        // If public URL is not configured, use the key as reference
-        console.warn("R2 public URL not configured, using key:", r2Key);
-        r2Url = r2Key;
+      if (useR2) {
+        await uploadFileToR2(req.file.buffer, r2Key, req.file.mimetype);
+
+        let r2Url;
+        try {
+          r2Url = getPublicUrl(r2Key);
+        } catch {
+          console.warn("R2 public URL not configured, using key:", r2Key);
+          r2Url = r2Key;
+        }
+
+        req.file.r2Key = r2Key;
+        req.file.r2Url = r2Url;
+        console.log("Message attachment uploaded to R2:", r2Key);
+      } else {
+        const uploadsRoot = path.join(process.cwd(), "uploads");
+        const absolutePath = path.join(uploadsRoot, ...r2Key.split("/"));
+        await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+        await fs.writeFile(absolutePath, req.file.buffer);
+        req.file.r2Key = r2Key;
+        req.file.r2Url = `/${["uploads", ...r2Key.split("/")].join("/")}`;
+        console.warn(
+          "Message attachment stored locally (R2 not configured). Serve via /uploads/…; set R2_* env vars for production.",
+        );
       }
 
-      // Attach R2 URL to req.file for use in controllers
-      req.file.r2Key = r2Key;
-      req.file.r2Url = r2Url;
-
-      console.log("Message attachment uploaded to R2:", r2Key);
       next();
     } catch (error) {
-      console.error("Error uploading message attachment to R2:", error);
-      return next(new Error(`Failed to upload file to R2: ${error.message}`));
+      console.error("Error storing message attachment:", error);
+      const e = new Error(
+        `Failed to store attachment: ${error.message || "Unknown error"}`,
+      );
+      e.status = 500;
+      return next(e);
     }
   });
 };

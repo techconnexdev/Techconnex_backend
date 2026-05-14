@@ -1,12 +1,28 @@
 // src/modules/provider/projects/service.js
 import { prisma } from "./model.js";
 import { getTotalEarnings } from "../billing/model.js";
+import { ChatOpenAI } from "@langchain/openai";
+import { PromptTemplate } from "@langchain/core/prompts";
+import { RunnableSequence } from "@langchain/core/runnables";
 import {
   GetProviderProjectsDto,
   UpdateProjectStatusDto,
   UpdateMilestoneStatusDto,
 } from "./dto.js";
 import { createNotification } from "../../notifications/service.js";
+import { buildBudgetDisplayData } from "../../fx/service.js";
+
+function cleanPlainText(value) {
+  return String(value || "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/(\*\*|__|\*|_)(.*?)\1/g, "$2")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 /**
  * Get all projects for a provider
@@ -35,7 +51,7 @@ export async function getProviderProjects(dto) {
 
     const skip = (dto.page - 1) * dto.limit;
 
-    const [projects, total] = await Promise.all([
+    const [projects, total, settings] = await Promise.all([
       prisma.project.findMany({
         where,
         include: {
@@ -72,7 +88,12 @@ export async function getProviderProjects(dto) {
         take: dto.limit,
       }),
       prisma.project.count({ where }),
+      prisma.settings.findUnique({
+        where: { userId: dto.providerId },
+        select: { preferredCurrency: true },
+      }),
     ]);
+    const preferredCurrency = settings?.preferredCurrency || "MYR";
 
     // Calculate progress, approved price, and next milestone for each project
     const projectsWithProgress = projects.map((project) => {
@@ -98,6 +119,7 @@ export async function getProviderProjects(dto) {
 
       return {
         ...project,
+        ...buildBudgetDisplayData(project, preferredCurrency),
         progress,
         completedMilestones,
         totalMilestones,
@@ -208,6 +230,11 @@ export async function getProviderProjectById(projectId, providerId) {
         "Project not found or you don't have permission to access it"
       );
     }
+    const settings = await prisma.settings.findUnique({
+      where: { userId: providerId },
+      select: { preferredCurrency: true },
+    });
+    const preferredCurrency = settings?.preferredCurrency || "MYR";
 
     // Find the ServiceRequest that created this Project to get the proposal and original timeline
     const serviceRequest = await prisma.serviceRequest.findFirst({
@@ -216,6 +243,11 @@ export async function getProviderProjectById(projectId, providerId) {
       },
       select: {
         id: true,
+        title: true,
+        description: true,
+        requirements: true,
+        deliverables: true,
+        skills: true,
         timeline: true, // Original company timeline
         acceptedProposalId: true,
       },
@@ -231,6 +263,7 @@ export async function getProviderProjectById(projectId, providerId) {
         },
         select: {
           id: true,
+          bidAmount: true,
           attachmentUrls: true,
           createdAt: true, // Use createdAt instead of submittedAt
           deliveryTime: true, // Provider's proposed timeline in days
@@ -256,11 +289,19 @@ export async function getProviderProjectById(projectId, providerId) {
 
     return {
       ...project,
+      ...buildBudgetDisplayData(project, preferredCurrency),
       progress,
       completedMilestones,
       totalMilestones,
       approvedPrice,
+      serviceRequestId: serviceRequest?.id || null,
+      serviceRequestTitle: serviceRequest?.title || null,
+      serviceRequestDescription: serviceRequest?.description || null,
+      serviceRequestRequirements: serviceRequest?.requirements || null,
+      serviceRequestDeliverables: serviceRequest?.deliverables || null,
+      serviceRequestSkills: serviceRequest?.skills || [],
       proposal: proposal, // Include proposal with attachments
+      bidAmount: proposal?.bidAmount ?? null, // Accepted proposal bid (project currency)
       originalTimeline: serviceRequest?.timeline || null, // Original company timeline (string)
       providerProposedTimeline: proposal?.deliveryTime || null, // Provider's proposed timeline in days (number, frontend will format)
     };
@@ -659,4 +700,154 @@ export async function getProviderPerformanceMetrics(providerId) {
     console.error("Error fetching provider performance metrics:", error);
     throw new Error("Failed to fetch performance metrics");
   }
+}
+
+export async function generateProjectMilestonesAiDraft(
+  projectId,
+  providerId,
+  payload = {},
+) {
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, providerId },
+    include: {
+      customer: {
+        select: {
+          name: true,
+          customerProfile: { select: { industry: true } },
+        },
+      },
+    },
+  });
+
+  if (!project) throw new Error("Project not found");
+
+  const serviceRequest = await prisma.serviceRequest.findFirst({
+    where: { projectId: project.id },
+    select: {
+      title: true,
+      description: true,
+      category: true,
+      requirements: true,
+      deliverables: true,
+      skills: true,
+      timeline: true,
+      budgetMin: true,
+      budgetMax: true,
+    },
+  });
+
+  const providerProfile = await prisma.providerProfile.findUnique({
+    where: { userId: providerId },
+    include: { user: { select: { name: true } } },
+  });
+  if (!providerProfile) throw new Error("Provider profile not found");
+
+  const bidAmount = Number(payload.bidAmount || 0);
+  const timelineAmount = Number(payload.timelineAmount || 0);
+  const timelineUnit = String(payload.timelineUnit || "").trim() || "day";
+  const processPreference = cleanPlainText(payload.processPreference || "");
+
+  const prompt = PromptTemplate.fromTemplate(`
+You are an expert proposal assistant. Write client-facing milestone drafts in plain text.
+
+Provider context:
+- Name: {providerName}
+- Role: {providerMajor}
+- Bio: {providerBio}
+- Skills: {providerSkills}
+- Years Experience: {yearsExperience}
+
+Project context:
+- Project title: {projectTitle}
+- Project description: {projectDescription}
+- Category: {projectCategory}
+- Requirements: {requirements}
+- Deliverables: {deliverables}
+- Skills Required: {projectSkills}
+- Timeline: {projectTimeline}
+- Budget: {budgetMin} - {budgetMax}
+- Client industry: {clientIndustry}
+
+Approved contract context:
+- Bid amount (project currency): {bidAmount}
+- Delivery timeline: {timelineAmount} {timelineUnit}
+- Provider process preference: {processPreference}
+
+Return ONLY valid JSON:
+{{
+  "milestones": [
+    {{ "title": "string", "description": "string" }}
+  ],
+  "explanation": ["string", "string"]
+}}
+
+Rules:
+- Plain text only, no markdown/HTML.
+- 3-6 milestones.
+- Professional natural wording.
+`);
+
+  const model = new ChatOpenAI({
+    modelName: "gpt-4o",
+    temperature: 0.35,
+    openAIApiKey: process.env.OPENAI_API_KEY,
+  });
+  const chain = RunnableSequence.from([prompt, model]);
+  const result = await chain.invoke({
+    providerName: providerProfile.user?.name || "Provider",
+    providerMajor: providerProfile.major || "",
+    providerBio: providerProfile.bio || "",
+    providerSkills: (providerProfile.skills || []).slice(0, 10).join(", "),
+    yearsExperience: String(providerProfile.yearsExperience || ""),
+    projectTitle: project.title || serviceRequest?.title || "",
+    projectDescription: project.description || serviceRequest?.description || "",
+    projectCategory: project.category || serviceRequest?.category || "",
+    requirements: Array.isArray(serviceRequest?.requirements)
+      ? serviceRequest.requirements.join(", ")
+      : String(serviceRequest?.requirements || ""),
+    deliverables: Array.isArray(serviceRequest?.deliverables)
+      ? serviceRequest.deliverables.join(", ")
+      : String(serviceRequest?.deliverables || ""),
+    projectSkills: Array.isArray(serviceRequest?.skills)
+      ? serviceRequest.skills.join(", ")
+      : "",
+    projectTimeline: serviceRequest?.timeline || "",
+    budgetMin: String(serviceRequest?.budgetMin || project.budgetMin || 0),
+    budgetMax: String(serviceRequest?.budgetMax || project.budgetMax || 0),
+    clientIndustry: project.customer?.customerProfile?.industry || "",
+    bidAmount: String(Number.isFinite(bidAmount) ? bidAmount : 0),
+    timelineAmount: String(Number.isFinite(timelineAmount) ? timelineAmount : 0),
+    timelineUnit,
+    processPreference,
+  });
+
+  const raw = String(result?.content || "").trim();
+  const jsonCandidate = raw
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```\s*$/i, "");
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonCandidate);
+  } catch {
+    throw new Error("AI draft response was invalid");
+  }
+
+  return {
+    milestones: Array.isArray(parsed?.milestones)
+      ? parsed.milestones
+          .map((m) => ({
+            title: cleanPlainText(m?.title),
+            description: cleanPlainText(m?.description),
+          }))
+          .filter((m) => m.title && m.description)
+          .slice(0, 6)
+      : [],
+    explanation: Array.isArray(parsed?.explanation)
+      ? parsed.explanation
+          .map((x) => cleanPlainText(x))
+          .filter(Boolean)
+          .slice(0, 4)
+      : [],
+  };
 }

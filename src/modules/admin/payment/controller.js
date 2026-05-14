@@ -7,6 +7,7 @@ import {
   generatePresignedDownloadUrl,
   fileExistsInR2,
 } from "../../../utils/r2.js";
+import { prisma } from "../../../utils/prisma.js";
 
 export const paymentController = {
   /**
@@ -19,18 +20,33 @@ export const paymentController = {
         search,
         status,
         method,
+        dateFrom,
+        dateTo,
+        participant,
+        transfer,
         page = 1,
         limit = 50,
         sortBy = "createdAt",
         sortOrder = "desc",
       } = req.query;
 
+      const rawLimit = Number.parseInt(String(limit), 10);
+      const safeLimit = Number.isFinite(rawLimit)
+        ? Math.min(Math.max(rawLimit, 1), 10000)
+        : 50;
+      const rawPage = Number.parseInt(String(page), 10);
+      const safePage = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
+
       const filters = {
         search,
         status,
         method,
-        page: parseInt(page),
-        limit: parseInt(limit),
+        dateFrom,
+        dateTo,
+        participant,
+        transfer,
+        page: safePage,
+        limit: safeLimit,
         sortBy,
         sortOrder,
       };
@@ -62,7 +78,11 @@ export const paymentController = {
    */
   async getPaymentStats(req, res) {
     try {
-      const stats = await paymentService.getPaymentStats();
+      const currency =
+        typeof req.query.currency === "string"
+          ? req.query.currency.trim().toUpperCase()
+          : "";
+      const stats = await paymentService.getPaymentStats(currency || undefined);
       res.json({
         success: true,
         data: stats,
@@ -182,6 +202,25 @@ export const paymentController = {
   async downloadReceipt(req, res) {
     try {
       const { id } = req.params;
+      const queryLocale =
+        typeof req.query?.lang === "string" && req.query.lang.trim()
+          ? req.query.lang.trim().toLowerCase()
+          : "";
+      const requesterId = req.user?.id || req.user?.userId;
+
+      const settings = requesterId
+        ? await prisma.settings.findUnique({
+            where: { userId: requesterId },
+            select: { locale: true, preferredCurrency: true },
+          })
+        : null;
+
+      const resolvedLocale = queryLocale || settings?.locale || "en";
+      const preferredCurrency =
+        typeof settings?.preferredCurrency === "string" &&
+        settings.preferredCurrency.trim()
+          ? settings.preferredCurrency.trim().toUpperCase()
+          : undefined;
 
       // Get payment details
       const payment = await paymentService.getPaymentById(id);
@@ -196,7 +235,12 @@ export const paymentController = {
       // Generate R2 key for the receipt (consistent key based on paymentId)
       // Format: receipts/admin/receipt-{paymentId}.pdf
       const sanitizedPaymentId = id.replace(/[^a-zA-Z0-9]/g, "-");
-      const r2Key = `receipts/admin/receipt-${sanitizedPaymentId}.pdf`;
+      const safeLocale = resolvedLocale.replace(/[^a-z-]/g, "").slice(0, 8) || "en";
+      const safeCurrency =
+        typeof preferredCurrency === "string" && /^[A-Z]{3}$/.test(preferredCurrency)
+          ? preferredCurrency
+          : "TXN";
+      const r2Key = `receipts/admin/receipt-${sanitizedPaymentId}-${safeLocale}-${safeCurrency}.pdf`;
 
       // Check if receipt already exists in R2
       const exists = await fileExistsInR2(r2Key);
@@ -212,7 +256,10 @@ export const paymentController = {
       }
 
       // Generate PDF receipt
-      const pdfBuffer = await generateReceiptPDF(payment);
+      const pdfBuffer = await generateReceiptPDF(payment, {
+        locale: safeLocale,
+        preferredCurrency,
+      });
 
       // Upload to R2
       await uploadFileToR2(pdfBuffer, r2Key, "application/pdf");

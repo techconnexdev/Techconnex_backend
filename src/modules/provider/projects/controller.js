@@ -6,6 +6,7 @@ import {
   updateMilestoneStatus,
   getProviderProjectStats,
   getProviderPerformanceMetrics,
+  generateProjectMilestonesAiDraft,
 } from "./service.js";
 import { GetProviderProjectsDto, UpdateProjectStatusDto, UpdateMilestoneStatusDto } from "./dto.js";
 import { generateProviderProjectsPDF } from "../../../utils/projectsPdfGenerator.js";
@@ -247,6 +248,29 @@ export async function exportProjectsController(req, res) {
     res.status(500).json({
       success: false,
       message: error.message,
+    });
+  }
+}
+
+// POST /api/provider/projects/:id/milestones/ai-draft
+export async function generateProjectMilestonesAiDraftController(req, res) {
+  try {
+    const projectId = req.params.id;
+    const providerId = req.user.userId;
+    if (!projectId) {
+      return res.status(400).json({ success: false, message: "Project ID is required" });
+    }
+    const draft = await generateProjectMilestonesAiDraft(
+      projectId,
+      providerId,
+      req.body || {},
+    );
+    return res.json({ success: true, draft });
+  } catch (error) {
+    console.error("Error in generateProjectMilestonesAiDraftController:", error);
+    return res.status(400).json({
+      success: false,
+      message: error?.message || "Failed to generate AI milestones",
     });
   }
 }

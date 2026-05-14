@@ -36,9 +36,9 @@ async function verifyGoogleToken(idToken) {
  * Login or register with Google.
  * - If user exists: log them in (role optional).
  * - If user does not exist and role is provided: create account for that role.
- * - If user does not exist and role is missing: throw (e.g. login page flow).
+ * - If user does not exist and role is missing: return needsRegistration (login flow asks user to pick company vs freelancer).
  * @param {{ idToken: string, role?: 'provider' | 'customer' }}
- * @returns {{ token: string, user: object }}
+ * @returns {{ token: string, user: object } | { needsRegistration: true, message: string }}
  */
 async function authWithGoogle({ idToken, role }) {
   const { email, name, picture } = await verifyGoogleToken(idToken);
@@ -60,10 +60,14 @@ async function authWithGoogle({ idToken, role }) {
     return { token, user: safeUser };
   }
 
-  // New user: role required for registration
-  const normalizedRole = (role || "").toLowerCase();
+  // New user: require role (from register flow or join-google after login).
+  let normalizedRole = (role || "").toLowerCase();
   if (normalizedRole !== "provider" && normalizedRole !== "customer") {
-    throw new Error("No account found. Please register first.");
+    return {
+      needsRegistration: true,
+      message:
+        "No TechConnex account is linked to this Google account yet. Choose whether to register as a company or a freelancer to continue.",
+    };
   }
 
   const randomPassword = crypto.randomBytes(32).toString("hex");
@@ -78,6 +82,7 @@ async function authWithGoogle({ idToken, role }) {
       role: ["PROVIDER"],
       kycStatus: "pending_verification",
       isVerified: false,
+      isGoogleAccount: true,
       providerProfile: {},
     });
     try {
@@ -107,6 +112,7 @@ async function authWithGoogle({ idToken, role }) {
     role: ["CUSTOMER"],
     kycStatus: "pending_verification",
     isVerified: false,
+    isGoogleAccount: true,
     customerProfile: {},
   });
   try {
@@ -126,6 +132,6 @@ async function authWithGoogle({ idToken, role }) {
   );
   const { password: _p, ...safeUser } = user;
   return { token, user: safeUser };
-}
+} 
 
 export { verifyGoogleToken, authWithGoogle };

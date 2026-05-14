@@ -1,8 +1,5 @@
+import { prisma } from "../../../utils/prisma.js";
 // src/modules/admin/reviews/service.js
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
 // Get all reviews (both company and provider reviews)
 export async function getAllReviews() {
   try {

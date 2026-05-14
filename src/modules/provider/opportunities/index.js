@@ -5,6 +5,7 @@ import {
   getOpportunityController,
   getRecommendedOpportunitiesController,
   getAiDraftsController,
+  generateOpportunityProposalAiDraftController,
 } from "./controller.js";
 import { authenticateToken } from "../../../middlewares/auth.js";
 
@@ -16,6 +17,7 @@ router.use(authenticateToken);
 // Routes
 router.get("/recommended", getRecommendedOpportunitiesController);
 router.get("/ai-drafts", getAiDraftsController);
+router.post("/:id/ai-draft", generateOpportunityProposalAiDraftController);
 router.get("/", getOpportunitiesController);
 router.get("/:id", getOpportunityController);
 

@@ -1,6 +1,170 @@
 import PDFDocument from "pdfkit";
+import {
+  convertWithSnapshot,
+  hasCurrencyInSnapshot,
+  normalizeCurrencyCode,
+} from "../modules/fx/service.js";
 
-export const generateReceiptPDF = (payment) => {
+const RECEIPT_I18N = {
+  en: {
+    title: "PAYMENT RECEIPT",
+    subtitle: "Official Payment Confirmation",
+    receiptInfoTitle: "Receipt Information",
+    receiptId: "Receipt ID",
+    issueDate: "Issue Date",
+    issueTime: "Issue Time",
+    paymentSummary: "Payment Summary",
+    totalAmountPaid: "TOTAL AMOUNT PAID",
+    paymentDetails: "Payment Details",
+    paymentMethod: "Payment Method",
+    currency: "Currency",
+    platformFee: "Platform Fee",
+    financialBreakdown: "Financial Breakdown",
+    amountPaid: "Amount Paid",
+    providerReceives: "Provider Receives",
+    netAmount: "Net Amount",
+    serviceDetails: "Service Details",
+    milestoneInfo: "Milestone Information",
+    milestoneTitle: "Milestone Title",
+    milestoneAmount: "Milestone Amount",
+    status: "Status",
+    description: "Description",
+    noDescription: "No description",
+    projectInfo: "Project Information",
+    projectTitle: "Project Title",
+    category: "Category",
+    projectId: "Project ID",
+    partiesInvolved: "Parties Involved",
+    customer: "Customer",
+    serviceProvider: "Service Provider",
+    name: "Name",
+    email: "Email",
+    phone: "Phone",
+    na: "N/A",
+    thankYou:
+      "Thank you for your business! This receipt is an official record of your payment.",
+  },
+  id: {
+    title: "BUKTI PEMBAYARAN",
+    subtitle: "Konfirmasi Pembayaran Resmi",
+    receiptInfoTitle: "Informasi Bukti Pembayaran",
+    receiptId: "ID Bukti",
+    issueDate: "Tanggal Terbit",
+    issueTime: "Waktu Terbit",
+    paymentSummary: "Ringkasan Pembayaran",
+    totalAmountPaid: "TOTAL PEMBAYARAN",
+    paymentDetails: "Detail Pembayaran",
+    paymentMethod: "Metode Pembayaran",
+    currency: "Mata Uang",
+    platformFee: "Biaya Platform",
+    financialBreakdown: "Rincian Keuangan",
+    amountPaid: "Jumlah Dibayar",
+    providerReceives: "Diterima Penyedia",
+    netAmount: "Jumlah Bersih",
+    serviceDetails: "Detail Layanan",
+    milestoneInfo: "Informasi Milestone",
+    milestoneTitle: "Judul Milestone",
+    milestoneAmount: "Jumlah Milestone",
+    status: "Status",
+    description: "Deskripsi",
+    noDescription: "Tidak ada deskripsi",
+    projectInfo: "Informasi Proyek",
+    projectTitle: "Judul Proyek",
+    category: "Kategori",
+    projectId: "ID Proyek",
+    partiesInvolved: "Pihak Terkait",
+    customer: "Pelanggan",
+    serviceProvider: "Penyedia Layanan",
+    name: "Nama",
+    email: "Email",
+    phone: "Telepon",
+    na: "N/A",
+    thankYou:
+      "Terima kasih atas transaksi Anda! Bukti ini adalah catatan resmi pembayaran Anda.",
+  },
+  ar: {
+    title: "إيصال الدفع",
+    subtitle: "تأكيد دفع رسمي",
+    receiptInfoTitle: "معلومات الإيصال",
+    receiptId: "رقم الإيصال",
+    issueDate: "تاريخ الإصدار",
+    issueTime: "وقت الإصدار",
+    paymentSummary: "ملخص الدفع",
+    totalAmountPaid: "إجمالي المبلغ المدفوع",
+    paymentDetails: "تفاصيل الدفع",
+    paymentMethod: "طريقة الدفع",
+    currency: "العملة",
+    platformFee: "رسوم المنصة",
+    financialBreakdown: "التفصيل المالي",
+    amountPaid: "المبلغ المدفوع",
+    providerReceives: "المبلغ المستلم للمزوّد",
+    netAmount: "المبلغ الصافي",
+    serviceDetails: "تفاصيل الخدمة",
+    milestoneInfo: "معلومات المرحلة",
+    milestoneTitle: "عنوان المرحلة",
+    milestoneAmount: "مبلغ المرحلة",
+    status: "الحالة",
+    description: "الوصف",
+    noDescription: "لا يوجد وصف",
+    projectInfo: "معلومات المشروع",
+    projectTitle: "عنوان المشروع",
+    category: "الفئة",
+    projectId: "معرّف المشروع",
+    partiesInvolved: "الأطراف المعنية",
+    customer: "العميل",
+    serviceProvider: "مقدم الخدمة",
+    name: "الاسم",
+    email: "البريد الإلكتروني",
+    phone: "الهاتف",
+    na: "غير متوفر",
+    thankYou: "شكرًا لتعاملكم معنا! هذا الإيصال سجل رسمي لعملية الدفع.",
+  },
+};
+
+const normalizeLocale = (locale) => {
+  const l = String(locale || "en").toLowerCase();
+  if (l.startsWith("id")) return "id";
+  if (l.startsWith("ar")) return "ar";
+  return "en";
+};
+
+export const generateReceiptPDF = (payment, options = {}) => {
+  const locale = normalizeLocale(options.locale);
+  const i18n = RECEIPT_I18N[locale] || RECEIPT_I18N.en;
+  const uiLocale = locale === "id" ? "id-ID" : locale === "ar" ? "ar" : "en-US";
+  const txCurrency = normalizeCurrencyCode(payment?.currency || "MYR") || "MYR";
+  const preferredCurrency = normalizeCurrencyCode(options?.preferredCurrency || txCurrency);
+  const snapshotRates = payment?.project?.fxSnapshotRatesJson || null;
+  const canConvertToPreferred =
+    preferredCurrency &&
+    preferredCurrency !== txCurrency &&
+    hasCurrencyInSnapshot(txCurrency, snapshotRates) &&
+    hasCurrencyInSnapshot(preferredCurrency, snapshotRates);
+  const displayCurrency = canConvertToPreferred ? preferredCurrency : txCurrency;
+
+  const toDisplayAmount = (amount) => {
+    const numeric = Number(amount || 0);
+    if (!Number.isFinite(numeric)) return 0;
+    if (!canConvertToPreferred) return numeric;
+    const converted = convertWithSnapshot({
+      amount: numeric,
+      fromCurrencyCode: txCurrency,
+      toCurrencyCode: displayCurrency,
+      ratesMap: snapshotRates,
+    });
+    return converted == null ? numeric : converted;
+  };
+
+  const formatMoney = (amount) => {
+    const numeric = Number(amount || 0);
+    if (!Number.isFinite(numeric)) return `${displayCurrency} 0`;
+    return new Intl.NumberFormat(uiLocale, {
+      style: "currency",
+      currency: displayCurrency,
+      maximumFractionDigits: 2,
+    }).format(numeric);
+  };
+
   const doc = new PDFDocument({ 
     margin: 40,
     size: 'A4',
@@ -120,6 +284,8 @@ export const generateReceiptPDF = (payment) => {
   // ==========================
   // HEADER
   // ==========================
+  const tr = (key) => i18n[key] || RECEIPT_I18N.en[key] || key;
+
   // Header background
   drawRoundedRect(0, 0, doc.page.width, 120, 0, colors.primary);
   
@@ -127,13 +293,13 @@ export const generateReceiptPDF = (payment) => {
   doc.fontSize(24)
      .fillColor('#ffffff')
      .font('Helvetica-Bold')
-     .text("PAYMENT RECEIPT", 50, 45, { align: "center" });
+     .text(tr("title"), 50, 45, { align: "center" });
   
   // Subtitle
   doc.fontSize(12)
      .fillColor('rgba(255,255,255,0.8)')
      .font('Helvetica')
-     .text("Official Payment Confirmation", 50, 75, { align: "center" });
+     .text(tr("subtitle"), 50, 75, { align: "center" });
 
   // Status badge
   const status = payment.status || 'completed';
@@ -159,12 +325,12 @@ export const generateReceiptPDF = (payment) => {
   doc.y = 140;
   
   const metaData = {
-    'Receipt ID': payment.id,
-    'Issue Date': new Date(payment.createdAt).toLocaleDateString(),
-    'Issue Time': new Date(payment.createdAt).toLocaleTimeString()
+    [tr("receiptId")]: payment.id,
+    [tr("issueDate")]: new Date(payment.createdAt).toLocaleDateString(uiLocale),
+    [tr("issueTime")]: new Date(payment.createdAt).toLocaleTimeString(uiLocale)
   };
   
-  createInfoCard("Receipt Information", metaData, doc.y);
+  createInfoCard(tr("receiptInfoTitle"), metaData, doc.y);
 
   // ==========================
   // PAYMENT SUMMARY
@@ -174,7 +340,7 @@ export const generateReceiptPDF = (payment) => {
   doc.fontSize(16)
      .fillColor(colors.primary)
      .font('Helvetica-Bold')
-     .text("Payment Summary", 50, doc.y)
+     .text(tr("paymentSummary"), 50, doc.y)
      .moveDown(0.5);
   
   doc.strokeColor(colors.primary)
@@ -194,32 +360,36 @@ export const generateReceiptPDF = (payment) => {
   doc.fontSize(12)
      .fillColor(colors.secondary)
      .font('Helvetica-Bold')
-     .text("TOTAL AMOUNT PAID", doc.page.width / 2 - doc.widthOfString("TOTAL AMOUNT PAID") / 2, amountCardY + 20);
+     .text(tr("totalAmountPaid"), doc.page.width / 2 - doc.widthOfString(tr("totalAmountPaid")) / 2, amountCardY + 20);
   
   doc.fontSize(24)
      .fillColor(colors.primary)
      .font('Helvetica-Bold')
-     .text(payment.amount + ' ' + payment.currency, doc.page.width / 2 - doc.widthOfString(payment.amount + ' ' + payment.currency) / 2, amountCardY + 45);
+     .text(
+      formatMoney(toDisplayAmount(payment.amount)),
+      doc.page.width / 2 - doc.widthOfString(formatMoney(toDisplayAmount(payment.amount))) / 2,
+      amountCardY + 45
+    );
   
   doc.y = amountCardY + 100;
 
   // Payment details in two columns
   const paymentDetailsY = doc.y;
   const leftColumn = {
-    title: "Payment Details",
+    title: tr("paymentDetails"),
     fields: {
-      'Payment Method': payment.method || 'N/A',
-      'Currency': payment.currency || 'N/A',
-      'Platform Fee': payment.platformFeeAmount + ' ' + payment.currency
+      [tr("paymentMethod")]: payment.method || tr("na"),
+      [tr("currency")]: displayCurrency || tr("na"),
+      [tr("platformFee")]: formatMoney(toDisplayAmount(payment.platformFeeAmount))
     }
   };
   
   const rightColumn = {
-    title: "Financial Breakdown",
+    title: tr("financialBreakdown"),
     fields: {
-      'Amount Paid': payment.amount + ' ' + payment.currency,
-      'Provider Receives': payment.providerAmount + ' ' + payment.currency,
-      'Net Amount': payment.providerAmount + ' ' + payment.currency
+      [tr("amountPaid")]: formatMoney(toDisplayAmount(payment.amount)),
+      [tr("providerReceives")]: formatMoney(toDisplayAmount(payment.providerAmount)),
+      [tr("netAmount")]: formatMoney(toDisplayAmount(payment.providerAmount))
     }
   };
   
@@ -239,7 +409,7 @@ export const generateReceiptPDF = (payment) => {
     doc.fontSize(16)
        .fillColor(colors.primary)
        .font('Helvetica-Bold')
-       .text("Service Details", 50, doc.y)
+       .text(tr("serviceDetails"), 50, doc.y)
        .moveDown(0.5);
     
     doc.strokeColor(colors.primary)
@@ -255,24 +425,24 @@ export const generateReceiptPDF = (payment) => {
     // Milestone details
     if (payment.milestone) {
       const milestoneData = {
-        'Milestone Title': payment.milestone.title || 'N/A',
-        'Milestone Amount': payment.milestone.amount || 'N/A',
-        'Status': payment.milestone.status || 'N/A',
-        'Description': payment.milestone.description || 'No description'
+        [tr("milestoneTitle")]: payment.milestone.title || tr("na"),
+        [tr("milestoneAmount")]: formatMoney(toDisplayAmount(payment.milestone.amount)),
+        [tr("status")]: payment.milestone.status || tr("na"),
+        [tr("description")]: payment.milestone.description || tr("noDescription")
       };
       
-      currentY = createInfoCard("Milestone Information", milestoneData, currentY);
+      currentY = createInfoCard(tr("milestoneInfo"), milestoneData, currentY);
     }
     
     // Project details
     if (payment.project) {
       const projectData = {
-        'Project Title': payment.project.title || 'N/A',
-        'Category': payment.project.category || 'N/A',
-        'Project ID': payment.project.id || 'N/A'
+        [tr("projectTitle")]: payment.project.title || tr("na"),
+        [tr("category")]: payment.project.category || tr("na"),
+        [tr("projectId")]: payment.project.id || tr("na")
       };
       
-      currentY = createInfoCard("Project Information", projectData, currentY);
+      currentY = createInfoCard(tr("projectInfo"), projectData, currentY);
     }
     
     doc.y = currentY;
@@ -289,7 +459,7 @@ export const generateReceiptPDF = (payment) => {
   doc.fontSize(16)
      .fillColor(colors.primary)
      .font('Helvetica-Bold')
-     .text("Parties Involved", 50, doc.y)
+     .text(tr("partiesInvolved"), 50, doc.y)
      .moveDown(0.5);
   
   doc.strokeColor(colors.primary)
@@ -307,20 +477,20 @@ export const generateReceiptPDF = (payment) => {
     const partiesY = doc.y;
     
     const customerData = {
-      title: "Customer",
+      title: tr("customer"),
       fields: {
-        'Name': customer?.name || 'N/A',
-        'Email': customer?.email || 'N/A',
-        'Phone': customer?.phone || 'N/A'
+        [tr("name")]: customer?.name || tr("na"),
+        [tr("email")]: customer?.email || tr("na"),
+        [tr("phone")]: customer?.phone || tr("na")
       }
     };
     
     const providerData = {
-      title: "Service Provider",
+      title: tr("serviceProvider"),
       fields: {
-        'Name': provider?.name || 'N/A',
-        'Email': provider?.email || 'N/A',
-        'Phone': provider?.phone || 'N/A'
+        [tr("name")]: provider?.name || tr("na"),
+        [tr("email")]: provider?.email || tr("na"),
+        [tr("phone")]: provider?.phone || tr("na")
       }
     };
     
@@ -353,7 +523,7 @@ export const generateReceiptPDF = (payment) => {
   doc.fontSize(10)
      .fillColor(colors.secondary)
      .font('Helvetica')
-     .text("Thank you for your business! This receipt is an official record of your payment.", 
+     .text(tr("thankYou"), 
            50, doc.page.height - 60, { align: "center", opacity: 0.8 });
 
   doc.end();

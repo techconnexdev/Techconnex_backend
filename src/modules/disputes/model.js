@@ -1,6 +1,11 @@
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { prisma } from "../../utils/prisma.js";
+/** Must match provider project dispute picker: these milestones cannot be linked. */
+const DISPUTE_MILESTONE_EXCLUDED_STATUSES = new Set([
+  "LOCKED",
+  "DRAFT",
+  "PAID",
+  "DISBUTED",
+]);
 
 export const disputeModel = {
   async getDisputeById(disputeId) {
@@ -103,20 +108,38 @@ export const disputeModel = {
   },
 
   async createDispute(data) {
-    // Validate milestone status if milestoneId is provided
+    const projectRow = await prisma.project.findUnique({
+      where: { id: data.projectId },
+      select: { status: true },
+    });
+    if (!projectRow) {
+      throw new Error("Project not found");
+    }
+    if (projectRow.status === "COMPLETED") {
+      throw new Error(
+        "This project is completed and cannot have new disputes.",
+      );
+    }
+
+    // Linked milestone must belong to this project and not be in a disallowed status
     if (data.milestoneId) {
       const milestone = await prisma.milestone.findUnique({
         where: { id: data.milestoneId },
-        select: { id: true, status: true, title: true },
+        select: { id: true, status: true, title: true, projectId: true },
       });
 
       if (!milestone) {
         throw new Error("Milestone not found");
       }
 
-      // Prevent disputes on approved or paid milestones
-      if (milestone.status === "APPROVED" || milestone.status === "PAID") {
-        throw new Error(`Cannot create a dispute for milestone "${milestone.title}" as it has already been approved or paid.`);
+      if (milestone.projectId !== data.projectId) {
+        throw new Error("Milestone does not belong to this project");
+      }
+
+      if (DISPUTE_MILESTONE_EXCLUDED_STATUSES.has(milestone.status)) {
+        throw new Error(
+          `Disputes cannot be linked to milestone "${milestone.title}" while it is ${milestone.status}.`,
+        );
       }
     }
 
@@ -127,22 +150,23 @@ export const disputeModel = {
     });
 
     if (existingDispute) {
-      // If dispute is CLOSED or RESOLVED, don't allow new updates
-      if (existingDispute.status === "CLOSED" || existingDispute.status === "RESOLVED") {
-        throw new Error("This project has a closed or resolved dispute and cannot have new disputes");
+      const isTerminal =
+        existingDispute.status === "CLOSED" ||
+        existingDispute.status === "RESOLVED";
+
+      // Only merge into an existing row when it is still open; closed/resolved → create a new dispute
+      if (!isTerminal) {
+        return await this.updateDispute(existingDispute.id, {
+          reason: data.reason,
+          description: data.description,
+          milestoneId: data.milestoneId || existingDispute.milestoneId,
+          paymentId: data.paymentId || existingDispute.paymentId,
+          contestedAmount: data.contestedAmount || existingDispute.contestedAmount,
+          suggestedResolution: data.suggestedResolution || existingDispute.suggestedResolution,
+          attachments: data.attachments || existingDispute.attachments,
+          status: existingDispute.status === "RESOLVED" ? "UNDER_REVIEW" : existingDispute.status,
+        });
       }
-      
-      // If dispute exists and is not CLOSED/RESOLVED, update it instead
-      return await this.updateDispute(existingDispute.id, {
-        reason: data.reason,
-        description: data.description,
-        milestoneId: data.milestoneId || existingDispute.milestoneId,
-        paymentId: data.paymentId || existingDispute.paymentId,
-        contestedAmount: data.contestedAmount || existingDispute.contestedAmount,
-        suggestedResolution: data.suggestedResolution || existingDispute.suggestedResolution,
-        attachments: data.attachments || existingDispute.attachments,
-        status: existingDispute.status === "RESOLVED" ? "UNDER_REVIEW" : existingDispute.status,
-      });
     }
 
     const dispute = await prisma.dispute.create({
@@ -200,7 +224,7 @@ export const disputeModel = {
       },
     });
 
-    // Freeze the milestone if one is associated
+    // Freeze the linked milestone (eligible status — validated above)
     if (data.milestoneId) {
       await prisma.milestone.update({
         where: { id: data.milestoneId },
@@ -208,34 +232,42 @@ export const disputeModel = {
           status: "DISPUTED",
         },
       });
-
-      // Update project status to DISPUTED if not already
-      await prisma.project.update({
-        where: { id: data.projectId },
-        data: {
-          status: "DISPUTED",
-        },
-      });
     }
+
+    // Project-level disputes (no milestone) still surface in admin as DISPUTED
+    await prisma.project.update({
+      where: { id: data.projectId },
+      data: {
+        status: "DISPUTED",
+      },
+    });
 
     return dispute;
   },
 
   async updateDispute(disputeId, data) {
-    // Validate milestone status if milestoneId is being updated
     if (data.milestoneId !== undefined && data.milestoneId !== null && data.milestoneId !== "") {
       const milestone = await prisma.milestone.findUnique({
         where: { id: data.milestoneId },
-        select: { id: true, status: true, title: true },
+        select: { id: true, status: true, title: true, projectId: true },
       });
 
       if (!milestone) {
         throw new Error("Milestone not found");
       }
 
-      // Prevent disputes on approved or paid milestones
-      if (milestone.status === "APPROVED" || milestone.status === "PAID") {
-        throw new Error(`Cannot update dispute to include milestone "${milestone.title}" as it has already been approved or paid.`);
+      const disputeRow = await prisma.dispute.findUnique({
+        where: { id: disputeId },
+        select: { projectId: true },
+      });
+      if (milestone.projectId !== disputeRow?.projectId) {
+        throw new Error("Milestone does not belong to this project");
+      }
+
+      if (DISPUTE_MILESTONE_EXCLUDED_STATUSES.has(milestone.status)) {
+        throw new Error(
+          `Disputes cannot be linked to milestone "${milestone.title}" while it is ${milestone.status}.`,
+        );
       }
     }
 

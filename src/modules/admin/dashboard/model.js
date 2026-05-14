@@ -1,7 +1,4 @@
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
+import { prisma } from "../../../utils/prisma.js";
 export const dashboardModel = {
   async getDashboardStats() {
     // Get all stats in parallel (excluding revenue which comes from payment service)

@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { PrismaClient } from "@prisma/client";
+
 import {
   findUserByEmail,
   findUserById,
@@ -10,8 +10,8 @@ import {
 } from "./model.js";
 import { createProviderAiDraft } from "./provider-ai-draft.js";
 import { notifyAdminsOfNewUser } from "../../notifications/service.js";
-
-const prisma = new PrismaClient();
+import { prisma } from "../../../utils/prisma.js";
+import { consumePhoneReadyForRegistration } from "../phoneRegistrationVerify.js";
 
 async function registerProvider(dto) {
   const existingUser = await findUserByEmail(dto.email);
@@ -19,8 +19,16 @@ async function registerProvider(dto) {
 
   const hashedPassword = await bcrypt.hash(dto.password, 10);
 
+  const phoneVerified =
+    Boolean(dto.phone && String(dto.phone).trim()) &&
+    consumePhoneReadyForRegistration(dto.phone);
+
   // Pass entire DTO, but overwrite the password
-  const user = await createProviderUser({ ...dto, password: hashedPassword });
+  const user = await createProviderUser({
+    ...dto,
+    password: hashedPassword,
+    phoneVerified,
+  });
 
   // Notify all admins about the new user registration
   try {

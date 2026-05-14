@@ -31,6 +31,9 @@ router.patch("/:id/suspend", userController.suspendUser);
 // Activate user
 router.patch("/:id/activate", userController.activateUser);
 
+// Restore soft-deleted account (clear settings.deletedAt)
+router.patch("/:id/restore", userController.restoreDeletedAccount);
+
 // Update user
 router.patch("/:id", userController.updateUser);
 

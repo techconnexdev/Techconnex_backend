@@ -1,8 +1,29 @@
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
+import { prisma } from "../../../utils/prisma.js";
 export const adminProjectModel = {
+  async createProject(data) {
+    return prisma.project.create({
+      data: {
+        title: data.title,
+        description: data.description || "",
+        category: data.category || "General",
+        budgetMin: parseFloat(data.budgetMin) || 0,
+        budgetMax: parseFloat(data.budgetMax) || 0,
+        skills: data.skills || [],
+        timeline: data.timeline || null,
+        requirements: data.requirements || null,
+        deliverables: data.deliverables || null,
+        status: data.status || "IN_PROGRESS",
+        currencyCode: data.currencyCode || "MYR",
+        customerId: data.customerId,
+        providerId: data.providerId,
+      },
+      include: {
+        customer: { select: { id: true, name: true, email: true } },
+        provider: { select: { id: true, name: true, email: true } },
+      },
+    });
+  },
+
   async getAllProjects(filters = {}) {
     // Build where clause for Projects
     const projectWhere = {};

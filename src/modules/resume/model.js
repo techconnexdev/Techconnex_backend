@@ -1,11 +1,8 @@
 import fs from "fs";
 import { createRequire } from "module";
+import { prisma } from "../../utils/prisma.js";
 const require = createRequire(import.meta.url);
 const pdf = require("pdf-parse");
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
 // This function is kept for backward compatibility but may not be used anymore
 // The new flow uses parseResumeTextFromBuffer in service.js
 export const parseResumeText = async (pdfPath) => {

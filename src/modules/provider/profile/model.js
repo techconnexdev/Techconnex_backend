@@ -1,7 +1,4 @@
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
+import { prisma } from "../../../utils/prisma.js";
 class ProviderProfileModel {
   // Get provider profile by user ID
   static async getProfileByUserId(userId) {
@@ -156,6 +153,30 @@ class ProviderProfileModel {
     return prisma.user.update({
       where: { id: userId },
       data: { phone: trimmed },
+    });
+  }
+
+  /** Update user phone (verified contact changes; same as company profile). */
+  static async updateUserPhone(userId, phone) {
+    const trimmed =
+      phone != null && String(phone).trim() !== "" ? String(phone).trim() : null;
+    if (!trimmed) return null;
+    return prisma.user.update({
+      where: { id: userId },
+      data: { phone: trimmed },
+    });
+  }
+
+  /** Update user email (verified contact changes; same as company profile). */
+  static async updateUserEmail(userId, email) {
+    const trimmed =
+      email != null && String(email).trim() !== ""
+        ? String(email).trim().toLowerCase()
+        : null;
+    if (!trimmed) return null;
+    return prisma.user.update({
+      where: { id: userId },
+      data: { email: trimmed },
     });
   }
 

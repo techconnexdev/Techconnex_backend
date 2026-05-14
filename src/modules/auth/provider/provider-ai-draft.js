@@ -1,10 +1,9 @@
-import { PrismaClient } from "@prisma/client";
+
 import { ChatOpenAI } from "@langchain/openai";
 import { PromptTemplate } from "@langchain/core/prompts";
 import { RunnableSequence } from "@langchain/core/runnables";
-
-const prisma = new PrismaClient();
-
+import { prisma } from "../../../utils/prisma.js";
+import { aiLocaleLanguage } from "../../../utils/aiDraftLocale.js";
 /**
  * Generate a short AI summary (<=180 chars) for a provider profile and save to AiDraft
  * @param {string} providerProfileId - ProviderProfile.id (uuid)
@@ -26,6 +25,7 @@ export async function createProviderAiDraft(providerProfileId) {
     // Prepare prompt
     const prompt = PromptTemplate.fromTemplate(`
 You are an assistant that writes a concise professional summary for a freelancer/provider profile.
+Output language: {outputLanguage}. Keep names, numbers, and currency codes unchanged.
 
 Profile data:
 - Name: {name}
@@ -58,40 +58,54 @@ Output only the brief text, nothing else.
       "Experienced professional";
 
     const chain = RunnableSequence.from([prompt, model]);
+    const fallbackForLocale = (locale) => {
+      const l = String(locale || "en").toLowerCase();
+      const major = profile.major || "";
+      const loc = profile.location || "";
+      const years = profile.yearsExperience?.toString() || "";
+      if (l.startsWith("id")) {
+        return `${major || "Tenaga ahli"}${years ? `, ${years} tahun` : ""}${loc ? `, ${loc}` : ""}. Spesialisasi: ${skills}.`.slice(0, 180);
+      }
+      if (l.startsWith("ar")) {
+        return `${major || "مقدم خدمات"}${years ? `، خبرة ${years} سنة` : ""}${loc ? `، ${loc}` : ""}. المهارات: ${skills}.`.slice(0, 180);
+      }
+      return `${major || "Experienced provider"}${years ? `, ${years} years experience` : ""}${loc ? `, based in ${loc}` : ""}. Skills: ${skills}.`.slice(0, 180);
+    };
+    const makeSummaryForLocale = async (locale) => {
+      try {
+        const result = await chain.invoke({
+          name: profile.user?.name || "",
+          major: profile.major || "",
+          skills,
+          yearsExperience: profile.yearsExperience?.toString() || "",
+          hourlyRate: profile.hourlyRate?.toString() || "",
+          location: profile.location || "",
+          availability: profile.availability || "",
+          workPreference: profile.workPreference || "",
+          outputLanguage: aiLocaleLanguage(locale),
+        });
 
-    const result = await chain.invoke({
-      name: profile.user?.name || "",
-      major: profile.major || "",
-      skills,
-      yearsExperience: profile.yearsExperience?.toString() || "",
-      hourlyRate: profile.hourlyRate?.toString() || "",
-      location: profile.location || "",
-      availability: profile.availability || "",
-      workPreference: profile.workPreference || "",
-    });
-
-    let text = (result.content || "").trim();
-
-    // Remove code fences or quotes
-    if (text.startsWith("```") && text.endsWith("```")) {
-      text = text.replace(/```[\s\S]*?```/g, "").trim();
-    }
-    if (text.startsWith('"') && text.endsWith('"'))
-      text = text.slice(1, -1).trim();
-
-    // Ensure length <= 180 chars
-    if (text.length > 180) {
-      text = text.slice(0, 177).trim();
-      // end with ellipsis if truncated
-      if (!text.endsWith("...")) text = text.replace(/[\s\S]$/g, "") + "...";
-    }
-
-    // Fallback if model returned empty
-    if (!text) {
-      text = `${
-        profile.major || "Experienced provider"
-      } with skills in ${skills}`.slice(0, 180);
-    }
+        let text = String(result?.content || "").trim();
+        if (text.startsWith("```") && text.endsWith("```")) {
+          text = text.replace(/```[\s\S]*?```/g, "").trim();
+        }
+        if (text.startsWith('"') && text.endsWith('"')) text = text.slice(1, -1).trim();
+        if (text.length > 180) {
+          text = text.slice(0, 177).trim();
+          if (!text.endsWith("...")) text = text.replace(/[\s\S]$/g, "") + "...";
+        }
+        if (!text) return fallbackForLocale(locale);
+        return text;
+      } catch {
+        return fallbackForLocale(locale);
+      }
+    };
+    const [en, id, ar] = await Promise.all([
+      makeSummaryForLocale("en"),
+      makeSummaryForLocale("id"),
+      makeSummaryForLocale("ar"),
+    ]);
+    const summaryMap = { en, id, ar };
 
     // Upsert: overwrite existing draft for this provider profile (no new records on re-submit)
     const existing = await prisma.aiDraft.findFirst({
@@ -102,7 +116,7 @@ Output only the brief text, nothing else.
     });
 
     const draftData = {
-      summary: text,
+      summary: summaryMap,
       sourceData: {
         name: profile.user?.name || null,
         major: profile.major || null,

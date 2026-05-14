@@ -1,5 +1,56 @@
 import { paymentModel } from "./model.js";
 import { confirmBankTransfer } from "../../payment/service.js";
+import {
+  convertWithSnapshot,
+  fetchLatestFxSnapshot,
+  normalizeCurrencyCode,
+} from "../../fx/service.js";
+
+/** Stats aggregates are MYR-normalized in the model; convert for admin display. */
+async function applyStatsDisplayCurrency(stats, requestedCurrency) {
+  const target = normalizeCurrencyCode(requestedCurrency);
+  if (!target || target === "MYR") {
+    return { ...stats, displayCurrency: "MYR" };
+  }
+
+  try {
+    const { ratesMap } = await fetchLatestFxSnapshot();
+    if (!ratesMap || !ratesMap[target]) {
+      return {
+        ...stats,
+        displayCurrency: "MYR",
+        displayCurrencyFallback: true,
+      };
+    }
+
+    const convertMyr = (myrAmount) => {
+      const raw = Number(myrAmount);
+      if (!Number.isFinite(raw)) return raw;
+      const v = convertWithSnapshot({
+        amount: raw,
+        fromCurrencyCode: "MYR",
+        toCurrencyCode: target,
+        ratesMap,
+      });
+      return v != null ? Number(v.toFixed(2)) : raw;
+    };
+
+    return {
+      ...stats,
+      totalVolume: convertMyr(stats.totalVolume),
+      totalFees: convertMyr(stats.totalFees),
+      netWorth: convertMyr(stats.netWorth),
+      totalRevenue: convertMyr(stats.totalRevenue ?? 0),
+      displayCurrency: target,
+    };
+  } catch {
+    return {
+      ...stats,
+      displayCurrency: "MYR",
+      displayCurrencyFallback: true,
+    };
+  }
+}
 
 export const paymentService = {
   /**
@@ -42,17 +93,19 @@ export const paymentService = {
   },
 
   /**
-   * Get payment statistics
+   * Get payment statistics (amounts MYR-normalized; optionally converted for display).
+   * @param {string} [displayCurrency] - ISO 4217 code (e.g. USD); omit or MYR for ringgit.
    */
-  async getPaymentStats() {
+  async getPaymentStats(displayCurrency) {
     try {
       const stats = await paymentModel.getPaymentStats();
       // Also get revenue stats (total revenue from TRANSFERRED payments)
       const revenueStats = await paymentModel.getRevenueStats();
-      return {
+      const merged = {
         ...stats,
         totalRevenue: revenueStats.totalRevenue,
       };
+      return applyStatsDisplayCurrency(merged, displayCurrency);
     } catch (error) {
       throw new Error(`Failed to get payment stats: ${error.message}`);
     }

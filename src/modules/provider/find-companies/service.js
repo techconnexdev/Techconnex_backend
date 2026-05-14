@@ -1,3 +1,4 @@
+import { prisma } from "../../../utils/prisma.js";
 // src/modules/provider/find-companies/service.js
 import {
   findCompanies,
@@ -9,10 +10,11 @@ import {
   getCompanyStats,
   getAiDraftsForCompanies,
 } from "./model.js";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
+import {
+  getAiDraftSummaryForLocale,
+  hasAiDraftSummaryForLocale,
+  normalizeAiLocale,
+} from "../../../utils/aiDraftLocale.js";
 // Find companies with filtering
 export async function searchCompanies(filters) {
   try {
@@ -278,9 +280,7 @@ export async function getCompanyStatistics(companyId) {
 export async function getCompanyOpportunities(companyId, providerId) {
   try {
     const { PrismaClient } = await import("@prisma/client");
-    const prisma = new PrismaClient();
-    
-    // Get OPEN ServiceRequests for this company
+// Get OPEN ServiceRequests for this company
     const serviceRequests = await prisma.serviceRequest.findMany({
       where: {
         customerId: companyId,
@@ -372,10 +372,39 @@ export async function getCompanyOpportunities(companyId, providerId) {
 }
 
 // Fetch AiDrafts for companies
-export async function getAiDraftsService(referenceIds = null) {
+export async function getAiDraftsService(referenceIds = null, locale = "en") {
   try {
-    const drafts = await getAiDraftsForCompanies(referenceIds);
-    return drafts;
+    const { createCompanyAiDraft } = await import(
+      "../../auth/company/company-ai-draft.js"
+    );
+    let drafts = await getAiDraftsForCompanies(referenceIds);
+    const normalized = normalizeAiLocale(locale);
+
+    if (Array.isArray(referenceIds) && referenceIds.length > 0) {
+      const uniqueIds = [...new Set(referenceIds.filter(Boolean))];
+      const byRef = new Map(drafts.map((d) => [d.referenceId, d]));
+      const idsToEnsure = uniqueIds.filter((id) => {
+        const d = byRef.get(id);
+        return !d || !hasAiDraftSummaryForLocale(d.summary, normalized);
+      });
+      if (idsToEnsure.length > 0) {
+        await Promise.all(
+          idsToEnsure.map(async (id) => {
+            try {
+              await createCompanyAiDraft(id);
+            } catch {
+              // Keep listing resilient if one profile fails (e.g. API limits).
+            }
+          }),
+        );
+        drafts = await getAiDraftsForCompanies(referenceIds);
+      }
+    }
+
+    return drafts.map((draft) => ({
+      ...draft,
+      summary: getAiDraftSummaryForLocale(draft.summary, normalized),
+    }));
   } catch (error) {
     console.error("Error fetching AiDrafts:", error);
     throw new Error("Failed to fetch AI drafts");
@@ -386,9 +415,7 @@ export async function getAiDraftsService(referenceIds = null) {
 export async function getFilterOptions() {
   try {
     const { PrismaClient } = await import("@prisma/client");
-    const prisma = new PrismaClient();
-    
-    // Get unique industries
+// Get unique industries
     const industriesResult = await prisma.customerProfile.findMany({
       select: {
         industry: true,

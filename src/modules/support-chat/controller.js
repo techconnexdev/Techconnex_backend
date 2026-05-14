@@ -101,7 +101,11 @@ export async function sendMessage(req, res) {
     if (!uid) return res.status(401).json({ success: false, message: "Unauthorized" });
 
     const { content, attachmentUrls } = req.body || {};
-    if (!content || typeof content !== "string" || !content.trim()) {
+    const normalizedContent = typeof content === "string" ? content.trim() : "";
+    const normalizedAttachmentUrls = Array.isArray(attachmentUrls)
+      ? attachmentUrls.filter((url) => typeof url === "string" && url.trim())
+      : [];
+    if (!normalizedContent && normalizedAttachmentUrls.length === 0) {
       return res.status(400).json({ success: false, message: "Content is required" });
     }
 
@@ -116,8 +120,8 @@ export async function sendMessage(req, res) {
     const { userMessage, aiMessage } = await service.addUserMessageAndReply(
       conversation.id,
       uid,
-      content.trim(),
-      Array.isArray(attachmentUrls) ? attachmentUrls : []
+      normalizedContent,
+      normalizedAttachmentUrls
     );
 
     const newMessages = [userMessage];
@@ -167,6 +171,17 @@ export async function sendMessage(req, res) {
       });
     }
     console.error("Support chat sendMessage:", err);
-    return res.status(500).json({ success: false, message: FRIENDLY_500_MESSAGE });
+    const rawMessage =
+      typeof err?.message === "string" && err.message.trim()
+        ? err.message.trim()
+        : FRIENDLY_500_MESSAGE;
+    const lower = rawMessage.toLowerCase();
+    const status =
+      lower.includes("rate limit") ||
+      lower.includes("too many requests") ||
+      lower.includes("quota")
+        ? 429
+        : 500;
+    return res.status(status).json({ success: false, message: rawMessage });
   }
 }

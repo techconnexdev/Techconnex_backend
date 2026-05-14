@@ -17,9 +17,6 @@ import {
 
 const router = express.Router();
 
-// Apply authentication to all routes
-router.use(authenticateToken);
-
 // Company search and listing
 router.get("/", findCompanies);
 router.get("/filters", getFilters);
@@ -32,6 +29,9 @@ router.get("/:id/reviews", getCompanyReviews);
 router.get("/:id/stats", getCompanyStats);
 router.get("/:id/opportunities", getCompanyOpportunitiesController);
 
+// Auth required for user-specific mutations/lists
+router.use(authenticateToken);
+
 // Save/unsave company
 router.post("/:id/save", saveCompany);
 router.delete("/:id/save", unsaveCompany);
@@ -40,4 +40,3 @@ router.delete("/:id/save", unsaveCompany);
 router.get("/users/:userId/saved-companies", getSavedCompanies);
 
 export default router;
-

@@ -1,7 +1,5 @@
+import { prisma } from "../../../utils/prisma.js";
 // src/modules/company/billing/model.js
-import { PrismaClient } from "@prisma/client";
-const prisma = new PrismaClient();
-
 async function getTotalSpent(userId) {
   return prisma.payment.aggregate({
     _sum: { amount: true },
@@ -41,7 +39,7 @@ async function getAverageTransactionByYear(userId) {
     FROM "Payment" p
     INNER JOIN "Project" pr ON p."projectId" = pr.id
     WHERE p.status IN ('ESCROWED', 'RELEASED', 'TRANSFERRED')
-      AND pr."customerId" = ${userId}
+      AND pr."customerId" = CAST(${userId} AS uuid)
     GROUP BY EXTRACT(YEAR FROM p."createdAt")
     ORDER BY year DESC
     LIMIT 6
@@ -70,8 +68,26 @@ async function getRecentTransactions(userId, limit = 5) {
     orderBy: { createdAt: "desc" },
     take: limit,
     include: {
-      project: { select: { title: true, category: true } },
-      milestone: { select: { title: true } },
+      project: {
+        select: {
+          title: true,
+          category: true,
+          currencyCode: true,
+          fxSnapshotRatesJson: true,
+          provider: {
+            select: {
+              name: true,
+              email: true,
+              providerProfile: {
+                select: {
+                  profileImageUrl: true,
+                },
+              },
+            },
+          },
+        },
+      },
+      milestone: { select: { title: true, amount: true } },
       Invoice: { select: { invoiceNumber: true } },
     },
   });
@@ -85,8 +101,26 @@ async function getAllTransactions(userId) {
     },
     orderBy: { createdAt: "desc" },
     include: {
-      project: { select: { title: true, category: true } },
-      milestone: { select: { title: true } },
+      project: {
+        select: {
+          title: true,
+          category: true,
+          currencyCode: true,
+          fxSnapshotRatesJson: true,
+          provider: {
+            select: {
+              name: true,
+              email: true,
+              providerProfile: {
+                select: {
+                  profileImageUrl: true,
+                },
+              },
+            },
+          },
+        },
+      },
+      milestone: { select: { title: true, amount: true } },
       Invoice: { select: { invoiceNumber: true } },
     },
   });
@@ -115,6 +149,8 @@ export const findUpcomingPayments = async (userId, currentDate) => {
     select: {
       id: true,
       title: true,
+      currencyCode: true,
+      fxSnapshotRatesJson: true,
       status: true,
       milestones: {
         where: {

@@ -1,6 +1,4 @@
-import { PrismaClient } from "@prisma/client";
-const prisma = new PrismaClient();
-
+import { prisma } from "../../../utils/prisma.js";
 // ✅ Create new KYC Document
 export const createKycDocumentInDB = async (data) => {
   return await prisma.kycDocument.create({
@@ -50,7 +48,6 @@ export const getKycDocumentByUserId = async (userId) => {
     orderBy: { uploadedAt: "desc" }, // ✅ ensures we get the newest one
   });
 };
-
 
 export const updateKycDocumentStatus = async (id, data) => {
   

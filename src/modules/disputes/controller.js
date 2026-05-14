@@ -1,7 +1,11 @@
 import { disputeService } from "./service.js";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { prisma } from "../../utils/prisma.js";
+const DISPUTE_MILESTONE_EXCLUDED_STATUSES = new Set([
+  "LOCKED",
+  "DRAFT",
+  "PAID",
+  "DISBUTED",
+]);
 
 export const disputeController = {
   async createDispute(req, res) {
@@ -68,11 +72,10 @@ export const disputeController = {
           });
         }
 
-        // Prevent disputes on approved or paid milestones
-        if (milestone.status === "APPROVED" || milestone.status === "PAID") {
+        if (DISPUTE_MILESTONE_EXCLUDED_STATUSES.has(milestone.status)) {
           return res.status(400).json({
             success: false,
-            error: `Cannot create a dispute for milestone "${milestone.title}" as it has already been approved or paid.`,
+            error: `Disputes cannot be linked to milestone "${milestone.title}" while it is ${milestone.status}.`,
           });
         }
       }
@@ -201,11 +204,10 @@ export const disputeController = {
           });
         }
 
-        // Prevent disputes on approved or paid milestones
-        if (milestone.status === "APPROVED" || milestone.status === "PAID") {
+        if (DISPUTE_MILESTONE_EXCLUDED_STATUSES.has(milestone.status)) {
           return res.status(400).json({
             success: false,
-            error: `Cannot update dispute to include milestone "${milestone.title}" as it has already been approved or paid.`,
+            error: `Disputes cannot be linked to milestone "${milestone.title}" while it is ${milestone.status}.`,
           });
         }
       }
@@ -254,7 +256,11 @@ export const disputeController = {
         updateData.attachments = uploadedFiles;
       }
 
-      const updatedDispute = await disputeService.updateDispute(id, updateData);
+      const updatedDispute = await disputeService.updateDispute(
+        id,
+        updateData,
+        userId
+      );
 
       res.json({
         success: true,

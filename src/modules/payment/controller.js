@@ -1,23 +1,27 @@
+import { prisma } from "../../utils/prisma.js";
 // controllers/payment.controller.js
 import {
   initiateClientPayment,
   confirmPaymentSuccess,
+  verifyPaymentReturn as verifyPaymentReturnForCustomer,
   releasePaymentToProvider,
   confirmBankTransfer,
   refundPayment,
   getPendingPayouts,
   getProviderEarnings,
 } from "./service.js";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
 /**
  * POST /api/payments/initiate
  * Client initiates payment for a milestone
  */
 export async function initiatePayment(req, res) {
   try {
-    const { projectId, milestoneId: incomingMilestoneId, amount } = req.body;
+    const {
+      projectId,
+      milestoneId: incomingMilestoneId,
+      amount,
+      currency: expectedCurrencyCode,
+    } = req.body;
     const customerId = req.user.id; // From auth middleware
 
     if (!projectId || !amount) {
@@ -103,6 +107,10 @@ export async function initiatePayment(req, res) {
       milestoneId,
       amount: parseFloat(amount),
       customerId,
+      expectedCurrencyCode:
+        typeof expectedCurrencyCode === "string"
+          ? expectedCurrencyCode
+          : undefined,
     });
 
     res.status(200).json({
@@ -277,6 +285,51 @@ export async function getEarningsController(req, res) {
 }
 
 /**
+ * GET /api/payments/verify-return?payment_intent=pi_xxx
+ * After Stripe redirect: returns DB payment status (ESCROWED only after webhook).
+ */
+export async function verifyPaymentReturn(req, res) {
+  try {
+    const stripePaymentIntentId = req.query.payment_intent;
+    if (!stripePaymentIntentId || typeof stripePaymentIntentId !== "string") {
+      return res.status(400).json({
+        success: false,
+        message: "Missing payment_intent",
+      });
+    }
+
+    const customerId = req.user.id;
+    const result = await verifyPaymentReturnForCustomer({
+      stripePaymentIntentId,
+      customerId,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error("verifyPaymentReturn error:", error);
+    if (error.message === "Unauthorized") {
+      return res.status(403).json({
+        success: false,
+        message: error.message,
+      });
+    }
+    if (error.message === "Payment not found") {
+      return res.status(404).json({
+        success: false,
+        message: error.message,
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+}
+
+/**
  * GET /api/payments/history
  * Get payment history for user
  */
@@ -337,6 +390,7 @@ export async function getPaymentHistory(req, res) {
 
 export default {
   initiatePayment,
+  verifyPaymentReturn,
   releasePayment,
   confirmTransfer,
   refundPaymentController,

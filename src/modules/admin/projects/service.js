@@ -10,6 +10,15 @@ export const adminProjectService = {
     }
   },
 
+  async createProject(data) {
+    try {
+      const project = await adminProjectModel.createProject(data);
+      return project;
+    } catch (error) {
+      throw new Error(`Failed to create project: ${error.message}`);
+    }
+  },
+
   async getProjectById(projectId) {
     try {
       const project = await adminProjectModel.getProjectById(projectId);

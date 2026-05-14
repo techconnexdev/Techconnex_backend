@@ -1,11 +1,9 @@
-import { PrismaClient } from "@prisma/client";
+
 import { uploadFileToR2, getPublicUrl, downloadFileFromR2, deleteFileFromR2 } from "../../../utils/r2.js";
 import { FRIENDLY_500_MESSAGE } from "../../../utils/errors.js";
 import { indexDocument } from "../../support-chat/rag-service.js";
 import { emitSupportUpdate } from "../../../io.js";
-
-const prisma = new PrismaClient();
-
+import { prisma } from "../../../utils/prisma.js";
 /**
  * GET /admin/support/conversations – list all support conversations (for admin)
  * Returns hasUnread per conversation (messages after admin's lastReadAt).

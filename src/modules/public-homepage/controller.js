@@ -6,6 +6,7 @@ import {
   getTopFreelancers,
   getTopCompanies,
   getLatestJobs,
+  getPublicJobById,
 } from "./service.js";
 
 /**
@@ -33,6 +34,32 @@ export async function getHomepageData(req, res) {
     res.status(500).json({
       success: false,
       message: "Failed to load homepage data",
+    });
+  }
+}
+
+/**
+ * GET /public/jobs/:id
+ * Public detail for an OPEN service request (homepage / showcase).
+ */
+export async function getPublicJobByIdController(req, res) {
+  try {
+    const job = await getPublicJobById(req.params.id);
+    if (!job) {
+      return res.status(404).json({
+        success: false,
+        message: "Job not found or no longer open",
+      });
+    }
+    res.json({
+      success: true,
+      opportunity: job,
+    });
+  } catch (error) {
+    console.error("Error in getPublicJobByIdController:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to load job",
     });
   }
 }

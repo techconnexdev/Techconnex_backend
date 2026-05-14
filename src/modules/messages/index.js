@@ -11,6 +11,7 @@ import {
   reportConversationHandler,
   checkReportStatusHandler,
   checkCanChatHandler,
+  translateMessagesBatchHandler,
 } from "./controller.js";
 
 import { authenticateToken } from "../../middlewares/auth.js";
@@ -40,6 +41,7 @@ router.post("/upload", uploadMessageAttachment, (req, res) => {
   });
 });
 
+router.post("/translate-batch", translateMessagesBatchHandler);
 router.get("/", getMessages); // GET /api/messages?otherUserId=... or just /api/messages for all
 router.get("/conversations", getConversations); // GET /api/messages/conversations
 router.get("/unread-count", getUnreadCount); // GET /api/messages/unread-count

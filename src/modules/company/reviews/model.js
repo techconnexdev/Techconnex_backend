@@ -1,6 +1,3 @@
+import { prisma } from "../../../utils/prisma.js";
 // src/modules/company/reviews/model.js
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
 export { prisma };

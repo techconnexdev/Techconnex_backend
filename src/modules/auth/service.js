@@ -1,8 +1,20 @@
 // src/modules/company/auth/service.js
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { findUserByEmail, updateUserPassword } from "./model.js";
+import { findUserByEmail, findUserByPhoneVariants, updateUserPassword } from "./model.js";
 import { setOtp, getOtp, deleteOtp } from "./emailOtpStore.js";
+import {
+  setPhoneOtp,
+  getPhoneOtp,
+  deletePhoneOtp,
+} from "./phoneOtpStore.js";
+import { assertPhoneOtpCooldown, markPhoneOtpSent } from "./phoneOtpCooldown.js";
+import {
+  normalizeToE164,
+  sendWhatsAppOtpTemplate,
+  isTwilioWhatsAppConfigured,
+} from "./twilioWhatsApp.js";
+import { markPhoneReadyForRegistration } from "./phoneRegistrationVerify.js";
 import { setResetToken, getResetToken, deleteResetToken } from "./passwordResetStore.js";
 import { sendEmail } from "./sendEmail.js";
 
@@ -23,7 +35,15 @@ async function loginProvider({ email, password }) {
 
   // ✅ Verify password
   const isPasswordValid = await bcrypt.compare(password, user.password);
-  if (!isPasswordValid) throw new Error("Your email or password is incorrect. Try again.");
+  if (!isPasswordValid) {
+    // Give a helpful message if this account was originally created via Google OAuth
+    if (user.isGoogleAccount) {
+      throw new Error(
+        "This account was created via Google. Please use 'Forgot Password' to set a password, or sign in with Google."
+      );
+    }
+    throw new Error("Your email or password is incorrect. Try again.");
+  }
 
   // ✅ Generate token
   const token = jwt.sign(
@@ -82,6 +102,120 @@ async function verifyEmailOtp(email, otp) {
   return { verified: true };
 }
 
+async function sendWhatsAppOtp(phone) {
+  if (!isTwilioWhatsAppConfigured()) {
+    throw new Error("WhatsApp verification is not configured on the server.");
+  }
+  const e164 = normalizeToE164(phone);
+  const existing = await findUserByPhoneVariants(e164);
+  if (existing) throw new Error("This phone number is already registered");
+
+  assertPhoneOtpCooldown(e164);
+  const otp = generateOtp();
+  setPhoneOtp(e164, otp);
+  try {
+    await sendWhatsAppOtpTemplate({
+      toE164: e164,
+      otp,
+      purpose: "verifying",
+    });
+    markPhoneOtpSent(e164);
+  } catch (err) {
+    deletePhoneOtp(e164);
+    throw err;
+  }
+  return { sent: true };
+}
+
+async function verifyWhatsAppOtp(phone, otp) {
+  const e164 = normalizeToE164(phone);
+  const code = (otp || "").toString().trim();
+  if (!code) throw new Error("OTP is required");
+
+  const stored = getPhoneOtp(e164);
+  if (!stored) throw new Error("OTP expired or not found. Please request a new code.");
+  if (stored !== code) throw new Error("Invalid verification code.");
+
+  deletePhoneOtp(e164);
+  markPhoneReadyForRegistration(e164);
+  return { verified: true };
+}
+
+async function sendLoginWhatsAppOtp(phone) {
+  if (!isTwilioWhatsAppConfigured()) {
+    throw new Error("WhatsApp verification is not configured on the server.");
+  }
+
+  const e164 = normalizeToE164(phone);
+  const user = await findUserByPhoneVariants(e164);
+  if (!user) throw new Error("No account found with this phone number.");
+  if (user.phone && String(user.phone).trim() && !user.phoneVerified) {
+    throw new Error(
+      "This phone number is registered but WhatsApp verification is not completed yet. Please sign in with email or Google, then verify your phone number in your profile settings.",
+    );
+  }
+  if (user.settings?.deletedAt) {
+    const deletedDate = new Date(user.settings.deletedAt).toLocaleString();
+    throw new Error(`This account was deleted on ${deletedDate}.`);
+  }
+  if (user.status === "SUSPENDED") {
+    throw new Error("Your account has been suspended. Please contact support.");
+  }
+
+  assertPhoneOtpCooldown(e164);
+  const otp = generateOtp();
+  setPhoneOtp(e164, otp);
+
+  try {
+    await sendWhatsAppOtpTemplate({
+      toE164: e164,
+      otp,
+      purpose: "logging in",
+    });
+    markPhoneOtpSent(e164);
+  } catch (err) {
+    deletePhoneOtp(e164);
+    throw err;
+  }
+
+  return { sent: true };
+}
+
+async function verifyLoginWhatsAppOtp(phone, otp) {
+  const e164 = normalizeToE164(phone);
+  const code = (otp || "").toString().trim();
+  if (!code) throw new Error("OTP is required");
+
+  const user = await findUserByPhoneVariants(e164);
+  if (!user) throw new Error("No account found with this phone number.");
+  if (user.phone && String(user.phone).trim() && !user.phoneVerified) {
+    throw new Error(
+      "This phone number is registered but WhatsApp verification is not completed yet. Please sign in with email or Google, then verify your phone number in your profile settings.",
+    );
+  }
+  if (user.settings?.deletedAt) {
+    const deletedDate = new Date(user.settings.deletedAt).toLocaleString();
+    throw new Error(`This account was deleted on ${deletedDate}.`);
+  }
+  if (user.status === "SUSPENDED") {
+    throw new Error("Your account has been suspended. Please contact support.");
+  }
+
+  const stored = getPhoneOtp(e164);
+  if (!stored) throw new Error("OTP expired or not found. Please request a new code.");
+  if (stored !== code) throw new Error("Invalid verification code.");
+
+  deletePhoneOtp(e164);
+
+  const token = jwt.sign(
+    { userId: user.id, role: user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+
+  return { token, user };
+}
+
 async function requestPasswordReset(email) {
   const normalizedEmail = (email || "").toString().trim().toLowerCase();
   if (!normalizedEmail) throw new Error("Email is required");
@@ -90,25 +224,24 @@ async function requestPasswordReset(email) {
 
   const user = await findUserByEmail(normalizedEmail);
   if (!user) {
-    // Don't reveal whether the email exists
-    return { sent: true };
+    return { sent: false, accountExists: false };
   }
 
   if (user.settings?.deletedAt || user.status === "SUSPENDED") {
-    return { sent: true };
+    return { sent: false, accountExists: true };
   }
 
   const token = setResetToken(normalizedEmail, user.id);
   const frontendUrl = process.env.FRONTEND_URL || process.env.APP_URL || "http://localhost:3000";
   const resetLink = `${frontendUrl}/auth/reset-password?token=${token}`;
 
-  await sendEmail({
+  const actuallySent = await sendEmail({
     to: normalizedEmail,
     subject: "Reset your password - TechConnex",
     text: `You requested a password reset. Click the link below to set a new password (valid for 1 hour):\n\n${resetLink}\n\nIf you didn't request this, you can ignore this email.`,
   });
 
-  return { sent: true };
+  return { sent: !!actuallySent, accountExists: true };
 }
 
 async function resetPasswordWithToken(token, newPassword) {
@@ -125,4 +258,15 @@ async function resetPasswordWithToken(token, newPassword) {
   return { success: true };
 }
 
-export { loginProvider, checkEmailAvailability, sendEmailOtp, verifyEmailOtp, requestPasswordReset, resetPasswordWithToken };
+export {
+  loginProvider,
+  checkEmailAvailability,
+  sendEmailOtp,
+  verifyEmailOtp,
+  sendWhatsAppOtp,
+  verifyWhatsAppOtp,
+  sendLoginWhatsAppOtp,
+  verifyLoginWhatsAppOtp,
+  requestPasswordReset,
+  resetPasswordWithToken,
+};

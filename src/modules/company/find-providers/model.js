@@ -1,8 +1,5 @@
+import { prisma } from "../../../utils/prisma.js";
 // src/modules/company/find-providers/model.js
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
 export { prisma };
 
 // Find providers with filtering and pagination

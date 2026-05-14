@@ -9,12 +9,16 @@ import {
   generatePresignedDownloadUrl,
   fileExistsInR2,
 } from "../../../utils/r2.js";
+import { prisma } from "../../../utils/prisma.js";
+import { normalizeReportLocale } from "../../../utils/reportPdfI18n.js";
+import { normalizeCurrencyCode } from "../../fx/service.js";
 import {
   getBillingOverview,
   getTransactionsList,
   getInvoicesList,
   getUpcomingPayments,
   getPaymentDetailsService,
+  buildBillingAnalyticsPdfData,
 } from "./service.js";
 
 async function getOverview(req, res) {
@@ -96,6 +100,22 @@ export const downloadReceipt = async (req, res, next) => {
   try {
     const { paymentId } = req.params;
     const userId = req.user?.userId;
+    const queryLocale =
+      typeof req.query?.lang === "string" && req.query.lang.trim()
+        ? req.query.lang.trim().toLowerCase()
+        : "";
+    const userSettings = await prisma.settings.findUnique({
+      where: { userId },
+      select: { locale: true, preferredCurrency: true },
+    });
+
+    const resolvedLocale = queryLocale || userSettings?.locale || "en";
+    const preferredCurrency =
+      typeof userSettings?.preferredCurrency === "string" &&
+      userSettings.preferredCurrency.trim()
+        ? userSettings.preferredCurrency.trim().toUpperCase()
+        : undefined;
+
 
     if (!userId) {
       return res.status(401).json({
@@ -108,7 +128,12 @@ export const downloadReceipt = async (req, res, next) => {
     // Format: receipts/{userId}/receipt-{paymentId}.pdf
     // This ensures the same payment always uses the same key
     const sanitizedPaymentId = paymentId.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const r2Key = `receipts/${userId}/receipt-${sanitizedPaymentId}.pdf`;
+    const safeLocale = resolvedLocale.replace(/[^a-z-]/g, "").slice(0, 8) || "en";
+    const safeCurrency =
+      typeof preferredCurrency === "string" && /^[A-Z]{3}$/.test(preferredCurrency)
+        ? preferredCurrency
+        : "TXN";
+    const r2Key = `receipts/${userId}/receipt-${sanitizedPaymentId}-${safeLocale}-${safeCurrency}.pdf`;
 
     // Check if file already exists in R2
     let downloadUrl;
@@ -120,7 +145,10 @@ export const downloadReceipt = async (req, res, next) => {
       const payment = await getPaymentDetailsService(paymentId);
 
       // Generate PDF buffer
-      const pdfBuffer = await generateReceiptPDF(payment);
+      const pdfBuffer = await generateReceiptPDF(payment, {
+        locale: safeLocale,
+        preferredCurrency,
+      });
 
       // Upload PDF buffer to R2
       await uploadFileToR2(pdfBuffer, r2Key, "application/pdf");
@@ -153,23 +181,45 @@ export const downloadReceipt = async (req, res, next) => {
 export const exportAnalyticsReport = async (req, res) => {
   try {
     const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
+    }
 
-    // Fetch all analytics data
-    const [overview, transactions, invoices, upcoming] = await Promise.all([
-      getBillingOverview(userId),
-      getTransactionsList(userId),
-      getInvoicesList(userId),
-      getUpcomingPayments(userId),
-    ]);
+    const queryLocale =
+      typeof req.query?.lang === "string" && req.query.lang.trim()
+        ? req.query.lang.trim()
+        : "";
+    const queryCurrency =
+      typeof req.query?.currency === "string" && req.query.currency.trim()
+        ? req.query.currency.trim().toUpperCase()
+        : "";
 
-    // Generate PDF buffer
+    const userSettings = await prisma.settings.findUnique({
+      where: { userId },
+      select: { locale: true, preferredCurrency: true },
+    });
+
+    const resolvedLocale = normalizeReportLocale(
+      queryLocale || userSettings?.locale || "en",
+    );
+    const fromSettings =
+      normalizeCurrencyCode(userSettings?.preferredCurrency || "MYR") || "MYR";
+    const resolvedCurrency =
+      queryCurrency && /^[A-Z]{3}$/.test(queryCurrency)
+        ? queryCurrency
+        : fromSettings;
+
+    const payload = await buildBillingAnalyticsPdfData(
+      userId,
+      resolvedCurrency,
+    );
+
     const pdfBuffer = await createAnalyticsPDF({
-      overview,
-      transactions,
-      invoices,
-      upcoming,
+      ...payload,
       generatedFor: userId,
       generatedAt: new Date(),
+      locale: resolvedLocale,
+      displayCurrency: resolvedCurrency,
     });
 
     // Generate R2 key for the report

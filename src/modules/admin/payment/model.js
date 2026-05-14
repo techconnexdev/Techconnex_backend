@@ -1,6 +1,23 @@
-import { PrismaClient } from "@prisma/client";
 
-const prisma = new PrismaClient();
+import { convertWithSnapshot, normalizeCurrencyCode } from "../../fx/service.js";
+import { prisma } from "../../../utils/prisma.js";
+function toMyrAmount(value, paymentCurrency, projectCurrency, ratesMap) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount)) return 0;
+  const fromCurrency =
+    normalizeCurrencyCode(paymentCurrency) ||
+    normalizeCurrencyCode(projectCurrency) ||
+    "MYR";
+  if (fromCurrency === "MYR") return amount;
+  const converted = convertWithSnapshot({
+    amount,
+    fromCurrencyCode: fromCurrency,
+    toCurrencyCode: "MYR",
+    ratesMap: ratesMap || null,
+  });
+  // If conversion snapshot is unavailable for a legacy row, keep original numeric value.
+  return converted == null ? amount : converted;
+}
 
 export const paymentModel = {
   /**
@@ -11,6 +28,10 @@ export const paymentModel = {
       search,
       status,
       method,
+      dateFrom,
+      dateTo,
+      participant,
+      transfer,
       page = 1,
       limit = 50,
       sortBy = "createdAt",
@@ -19,57 +40,162 @@ export const paymentModel = {
 
     const skip = (page - 1) * limit;
 
-    // Build where clause
-    const where = {};
+    const andConditions = [];
+
+    if (dateFrom || dateTo) {
+      const createdAt = {};
+      if (dateFrom) {
+        const d = new Date(String(dateFrom));
+        d.setHours(0, 0, 0, 0);
+        createdAt.gte = d;
+      }
+      if (dateTo) {
+        const d = new Date(String(dateTo));
+        d.setHours(23, 59, 59, 999);
+        createdAt.lte = d;
+      }
+      andConditions.push({ createdAt });
+    }
 
     if (status && status !== "all") {
-      where.status = status;
+      andConditions.push({ status });
     }
 
     if (method && method !== "all") {
-      where.method = method;
+      andConditions.push({ method });
     }
 
-    if (search) {
-      where.OR = [
-        {
-          project: {
-            title: {
-              contains: search,
-              mode: "insensitive",
-            },
-          },
+    const transferMode = typeof transfer === "string" ? transfer.trim() : "";
+    if (transferMode === "ready-to-transfer") {
+      andConditions.push({
+        status: "ESCROWED",
+        milestone: { status: "APPROVED" },
+      });
+    } else if (transferMode === "normal") {
+      andConditions.push({
+        NOT: {
+          AND: [
+            { status: "ESCROWED" },
+            { milestone: { status: "APPROVED" } },
+          ],
         },
-        {
-          project: {
-            customer: {
-              name: {
-                contains: search,
-                mode: "insensitive",
-              },
-            },
-          },
-        },
-        {
-          project: {
-            provider: {
-              name: {
-                contains: search,
-                mode: "insensitive",
-              },
-            },
-          },
-        },
-        {
-          milestone: {
-            title: {
-              contains: search,
-              mode: "insensitive",
-            },
-          },
-        },
-      ];
+      });
     }
+
+    if (search && String(search).trim()) {
+      const q = String(search).trim();
+      andConditions.push({
+        OR: [
+          {
+            project: {
+              title: {
+                contains: q,
+                mode: "insensitive",
+              },
+            },
+          },
+          {
+            project: {
+              customer: {
+                name: {
+                  contains: q,
+                  mode: "insensitive",
+                },
+              },
+            },
+          },
+          {
+            project: {
+              customer: {
+                email: {
+                  contains: q,
+                  mode: "insensitive",
+                },
+              },
+            },
+          },
+          {
+            project: {
+              provider: {
+                name: {
+                  contains: q,
+                  mode: "insensitive",
+                },
+              },
+            },
+          },
+          {
+            project: {
+              provider: {
+                email: {
+                  contains: q,
+                  mode: "insensitive",
+                },
+              },
+            },
+          },
+          {
+            milestone: {
+              title: {
+                contains: q,
+                mode: "insensitive",
+              },
+            },
+          },
+        ],
+      });
+    }
+
+    if (participant && String(participant).trim()) {
+      const q = String(participant).trim();
+      andConditions.push({
+        OR: [
+          {
+            project: {
+              customer: {
+                name: {
+                  contains: q,
+                  mode: "insensitive",
+                },
+              },
+            },
+          },
+          {
+            project: {
+              customer: {
+                email: {
+                  contains: q,
+                  mode: "insensitive",
+                },
+              },
+            },
+          },
+          {
+            project: {
+              provider: {
+                name: {
+                  contains: q,
+                  mode: "insensitive",
+                },
+              },
+            },
+          },
+          {
+            project: {
+              provider: {
+                email: {
+                  contains: q,
+                  mode: "insensitive",
+                },
+              },
+            },
+          },
+        ],
+      });
+    }
+
+    const where =
+      andConditions.length > 0 ? { AND: andConditions } : {};
 
     // Build orderBy
     const orderBy = {};
@@ -212,8 +338,7 @@ export const paymentModel = {
   async getPaymentStats() {
     const [
       totalPayments,
-      totalVolume,
-      totalFees,
+      paymentsForTotals,
       pendingPayments,
       escrowedPayments,
       releasedPayments,
@@ -222,11 +347,24 @@ export const paymentModel = {
       readyToTransfer,
     ] = await Promise.all([
       prisma.payment.count(),
-      prisma.payment.aggregate({
-        _sum: { amount: true },
-      }),
-      prisma.payment.aggregate({
-        _sum: { platformFeeAmount: true },
+      prisma.payment.findMany({
+        select: {
+          status: true,
+          amount: true,
+          platformFeeAmount: true,
+          currency: true,
+          milestone: {
+            select: {
+              amount: true,
+            },
+          },
+          project: {
+            select: {
+              currencyCode: true,
+              fxSnapshotRatesJson: true,
+            },
+          },
+        },
       }),
       prisma.payment.count({
         where: { status: "PENDING" },
@@ -253,10 +391,54 @@ export const paymentModel = {
       }),
     ]);
 
+    const { totalVolume, totalFees, netWorth } = paymentsForTotals.reduce(
+      (acc, p) => {
+        const ratesMap = p.project?.fxSnapshotRatesJson || null;
+        const projectCurrency = p.project?.currencyCode || "MYR";
+        const paymentCurrency = p.currency || projectCurrency;
+        const status = String(p.status || "").toUpperCase();
+        const milestoneAmount = Number(p.milestone?.amount || 0);
+        const escrowHeldAmount =
+          milestoneAmount > 0
+            ? Number((milestoneAmount * 1.05).toFixed(2))
+            : Number(p.amount || 0);
+        const transferredFeeOnly =
+          milestoneAmount > 0
+            ? Number((milestoneAmount * 0.1).toFixed(2))
+            : Number(p.platformFeeAmount || 0);
+
+        acc.totalVolume += toMyrAmount(
+          p.amount,
+          paymentCurrency,
+          projectCurrency,
+          ratesMap,
+        );
+        acc.totalFees += toMyrAmount(
+          p.platformFeeAmount,
+          paymentCurrency,
+          projectCurrency,
+          ratesMap,
+        );
+        // Net worth rule:
+        // - For ESCROWED and TRANSFERRED, count only fee value.
+        if (status === "ESCROWED" || status === "TRANSFERRED") {
+          acc.netWorth += toMyrAmount(
+            transferredFeeOnly,
+            paymentCurrency,
+            projectCurrency,
+            ratesMap,
+          );
+        }
+        return acc;
+      },
+      { totalVolume: 0, totalFees: 0, netWorth: 0 },
+    );
+
     return {
       totalPayments,
-      totalVolume: totalVolume._sum.amount || 0,
-      totalFees: totalFees._sum.platformFeeAmount || 0,
+      totalVolume: Number(totalVolume.toFixed(2)),
+      totalFees: Number(totalFees.toFixed(2)),
+      netWorth: Number(netWorth.toFixed(2)),
       pendingPayments,
       escrowedPayments,
       releasedPayments,
@@ -271,13 +453,34 @@ export const paymentModel = {
    */
   async getRevenueStats() {
     try {
-      // Get total revenue: sum of platformFeeAmount for payments with status TRANSFERRED
-      const totalRevenueResult = await prisma.payment.aggregate({
+      // Get total revenue (MYR-normalized): sum of platform fee for TRANSFERRED payments
+      const transferredPayments = await prisma.payment.findMany({
         where: { status: "TRANSFERRED" },
-        _sum: { platformFeeAmount: true },
+        select: {
+          platformFeeAmount: true,
+          currency: true,
+          project: {
+            select: {
+              currencyCode: true,
+              fxSnapshotRatesJson: true,
+            },
+          },
+        },
       });
-
-      const totalRevenue = totalRevenueResult._sum.platformFeeAmount || 0;
+      const totalRevenue = transferredPayments.reduce((sum, p) => {
+        const ratesMap = p.project?.fxSnapshotRatesJson || null;
+        const projectCurrency = p.project?.currencyCode || "MYR";
+        const paymentCurrency = p.currency || projectCurrency;
+        return (
+          sum +
+          toMyrAmount(
+            p.platformFeeAmount,
+            paymentCurrency,
+            projectCurrency,
+            ratesMap,
+          )
+        );
+      }, 0);
 
       // Calculate growth rate (compare last 30 days vs previous 30 days)
       const now = new Date();
@@ -289,7 +492,7 @@ export const paymentModel = {
 
       // Get revenue for current period (last 30 days)
       // Use bankTransferDate if available, otherwise use updatedAt (when bankTransferDate is null)
-      const currentPeriodRevenue = await prisma.payment.aggregate({
+      const currentPeriodPayments = await prisma.payment.findMany({
         where: {
           status: "TRANSFERRED",
           OR: [
@@ -310,11 +513,20 @@ export const paymentModel = {
             },
           ],
         },
-        _sum: { platformFeeAmount: true },
+        select: {
+          platformFeeAmount: true,
+          currency: true,
+          project: {
+            select: {
+              currencyCode: true,
+              fxSnapshotRatesJson: true,
+            },
+          },
+        },
       });
 
       // Get revenue for previous period (30-60 days ago)
-      const previousPeriodRevenue = await prisma.payment.aggregate({
+      const previousPeriodPayments = await prisma.payment.findMany({
         where: {
           status: "TRANSFERRED",
           OR: [
@@ -337,11 +549,46 @@ export const paymentModel = {
             },
           ],
         },
-        _sum: { platformFeeAmount: true },
+        select: {
+          platformFeeAmount: true,
+          currency: true,
+          project: {
+            select: {
+              currencyCode: true,
+              fxSnapshotRatesJson: true,
+            },
+          },
+        },
       });
 
-      const currentRevenue = currentPeriodRevenue._sum.platformFeeAmount || 0;
-      const previousRevenue = previousPeriodRevenue._sum.platformFeeAmount || 0;
+      const currentRevenue = currentPeriodPayments.reduce((sum, p) => {
+        const ratesMap = p.project?.fxSnapshotRatesJson || null;
+        const projectCurrency = p.project?.currencyCode || "MYR";
+        const paymentCurrency = p.currency || projectCurrency;
+        return (
+          sum +
+          toMyrAmount(
+            p.platformFeeAmount,
+            paymentCurrency,
+            projectCurrency,
+            ratesMap,
+          )
+        );
+      }, 0);
+      const previousRevenue = previousPeriodPayments.reduce((sum, p) => {
+        const ratesMap = p.project?.fxSnapshotRatesJson || null;
+        const projectCurrency = p.project?.currencyCode || "MYR";
+        const paymentCurrency = p.currency || projectCurrency;
+        return (
+          sum +
+          toMyrAmount(
+            p.platformFeeAmount,
+            paymentCurrency,
+            projectCurrency,
+            ratesMap,
+          )
+        );
+      }, 0);
 
       // Calculate growth rate
       const growthRate =
@@ -352,7 +599,7 @@ export const paymentModel = {
           : 0;
 
       return {
-        totalRevenue,
+        totalRevenue: Number(totalRevenue.toFixed(2)),
         growthRate: Math.round(growthRate * 10) / 10, // Round to 1 decimal place
       };
     } catch (error) {

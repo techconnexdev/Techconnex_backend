@@ -8,8 +8,21 @@ import {
 } from "./service.js";
 import { GetProjectRequestsDto, AcceptProposalDto, RejectProposalDto } from "./dto.js";
 import { generateCustomerRequestsPDF } from "../../../utils/projectsPdfGenerator.js";
-import { generateBidExplanation } from "./bid-explanation.js";
+import {
+  generateBidExplanation,
+  hasAiFitExplanationForLocale,
+  getLocalizedAiFitExplanation,
+  parseAiFitExplanationByLocale,
+} from "./bid-explanation.js";
 import { calculateProposalScore } from "./bid-ranking.js";
+import { prisma } from "../../../utils/prisma.js";
+
+function sanitizeLocale(locale) {
+  const code = String(locale || "en").trim().toLowerCase();
+  if (code.startsWith("id")) return "id";
+  if (code.startsWith("ar")) return "ar";
+  return "en";
+}
 
 // GET /api/company/project-requests - Get all project requests (proposals) for a company
 export async function getProjectRequestsController(req, res) {
@@ -40,6 +53,16 @@ export async function getBidExplanationController(req, res) {
   try {
     const proposalId = req.params.id;
     const customerId = req.user.userId;
+        const queryLocale =
+          typeof req.query?.lang === "string" && req.query.lang.trim()
+            ? req.query.lang.trim().toLowerCase()
+            : "";
+        const settings = await prisma.settings.findUnique({
+          where: { userId: customerId },
+          select: { locale: true },
+        });
+        const locale = sanitizeLocale(queryLocale || settings?.locale || "en");
+
     if (!proposalId) {
       return res.status(400).json({ success: false, message: "Proposal ID is required" });
     }
@@ -47,17 +70,28 @@ export async function getBidExplanationController(req, res) {
     if (!proposal.serviceRequest) {
       return res.status(400).json({ success: false, message: "Proposal or project not found" });
     }
-    // Use stored explanation when available (saves tokens)
-    const stored = proposal.aiFitExplanation && proposal.aiFitExplanation.trim();
-    if (stored) {
+    // Return cached locale variant only when this locale already exists.
+    if (hasAiFitExplanationForLocale(proposal.aiFitExplanation, locale)) {
+      const stored = getLocalizedAiFitExplanation(proposal.aiFitExplanation, locale);
       return res.json({ success: true, explanation: stored });
     }
     const withScore = {
       ...proposal,
       matchScore: proposal.matchScore ?? calculateProposalScore(proposal, proposal.serviceRequest),
     };
-    const explanation = await generateBidExplanation(withScore);
-    const defaultSummary = "Review this proposal’s bid amount, timeline, and milestones. Check the provider’s profile and cover letter to assess how well they match your project.";
+    const explanation = await generateBidExplanation(withScore, locale);
+    if (explanation && explanation.trim()) {
+      const aiMap = parseAiFitExplanationByLocale(proposal.aiFitExplanation);
+      aiMap[locale] = explanation.trim();
+      await prisma.proposal.update({
+        where: { id: proposal.id },
+        data: { aiFitExplanation: aiMap },
+      });
+    }
+    const defaultSummary =
+      locale === "id"
+        ? "Tinjau nilai penawaran, timeline, dan milestone proposal ini. Periksa profil penyedia dan cover letter untuk menilai kecocokan dengan proyek Anda."
+        : "Review this proposal’s bid amount, timeline, and milestones. Check the provider’s profile and cover letter to assess how well they match your project.";
     res.json({ success: true, explanation: (explanation && explanation.trim()) || defaultSummary });
   } catch (error) {
     console.error("Error in getBidExplanationController:", error);

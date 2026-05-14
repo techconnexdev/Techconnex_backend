@@ -40,7 +40,9 @@ import KycRouter from "../modules/kyc/index.js";
 import notificationsRoutes from "../modules/notifications/index.js";
 import uploadsRouter from "../modules/uploads/index.js";
 import publicHomepageRouter from "../modules/public-homepage/index.js";
+import { getPublicJobByIdController } from "../modules/public-homepage/controller.js";
 import { authenticateToken } from "../middlewares/auth.js";
+import { prisma } from "../utils/prisma.js";
 // import providerCertificateRouter from "../modules/certifications/index.js";
 
 const router = express.Router();
@@ -112,6 +114,7 @@ router.use("/uploads", uploadsRouter);
 
 // Public homepage data (no auth) — top freelancers, companies, latest jobs
 router.use("/public/homepage", publicHomepageRouter);
+router.get("/public/jobs/:id", getPublicJobByIdController);
 
 // Mount check-email under /api so frontend using NEXT_PUBLIC_API_URL that
 // points to http://host:PORT/api will be able to call `${API_BASE}/check-email`
@@ -119,9 +122,7 @@ router.use("/public/homepage", publicHomepageRouter);
 router.get("/admins", authenticateToken, async (req, res) => {
   try {
     const { PrismaClient } = await import("@prisma/client");
-    const prisma = new PrismaClient();
-
-    const admins = await prisma.user.findMany({
+const admins = await prisma.user.findMany({
       where: {
         role: { has: "ADMIN" },
         status: "ACTIVE",
@@ -155,9 +156,7 @@ router.get("/admins", authenticateToken, async (req, res) => {
 router.get("/users/:id", async (req, res) => {
   try {
     const { PrismaClient } = await import("@prisma/client");
-    const prisma = new PrismaClient();
-
-    const user = await prisma.user.findUnique({
+const user = await prisma.user.findUnique({
       where: { id: req.params.id },
       include: {
         customerProfile: true,

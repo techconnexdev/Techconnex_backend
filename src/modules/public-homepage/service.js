@@ -1,3 +1,5 @@
+import { prisma } from "../../utils/prisma.js";
+import { buildBudgetDisplayData } from "../fx/service.js";
 /**
  * Public Homepage Service
  * Serves aggregated, non-sensitive data for unauthenticated visitors.
@@ -5,10 +7,6 @@
  * (name, industry, employeeCount, logo), latest open service requests
  * (title, budget range, skills, category). No PII or sensitive data.
  */
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
 const DEFAULT_LIMIT = 6;
 
 /**
@@ -125,4 +123,54 @@ export async function getLatestJobs(limit = DEFAULT_LIMIT) {
     category: r.category,
     createdAt: r.createdAt,
   }));
+}
+
+/**
+ * Single OPEN service request for public marketing pages (no auth).
+ * Omits customer email. Same budget shaping as provider opportunities (MYR display default).
+ */
+export async function getPublicJobById(jobId) {
+  if (!jobId || typeof jobId !== "string") return null;
+
+  const serviceRequest = await prisma.serviceRequest.findFirst({
+    where: {
+      id: jobId,
+      status: "OPEN",
+    },
+    include: {
+      customer: {
+        select: {
+          id: true,
+          name: true,
+          isVerified: true,
+          customerProfile: {
+            select: {
+              companySize: true,
+              industry: true,
+              location: true,
+              website: true,
+              profileImageUrl: true,
+              projectsPosted: true,
+            },
+          },
+        },
+      },
+      milestones: {
+        orderBy: { order: "asc" },
+      },
+      _count: {
+        select: { proposals: true },
+      },
+    },
+  });
+
+  if (!serviceRequest) return null;
+
+  const preferredCurrency = "MYR";
+  return {
+    ...serviceRequest,
+    hasProposed: false,
+    preferredCurrency,
+    ...buildBudgetDisplayData(serviceRequest, preferredCurrency),
+  };
 }

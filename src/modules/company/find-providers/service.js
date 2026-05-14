@@ -1,3 +1,4 @@
+import { prisma } from "../../../utils/prisma.js";
 // src/modules/company/find-providers/service.js
 import {
   findProviders,
@@ -8,10 +9,11 @@ import {
   getSavedProviders,
   getProviderStats,
 } from "./model.js";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
+import {
+  getAiDraftSummaryForLocale,
+  hasAiDraftSummaryForLocale,
+  normalizeAiLocale,
+} from "../../../utils/aiDraftLocale.js";
 // Find providers with filtering
 export async function searchProviders(filters) {
   try {
@@ -21,10 +23,16 @@ export async function searchProviders(filters) {
     const transformedProviders = result.providers.map((user) => {
       const settings = user.settings || {};
       const allowMessages = settings.allowMessages !== false; // Default to true if not set
+      const prefCurRaw = settings.preferredCurrency;
+      const preferredCurrency =
+        typeof prefCurRaw === "string" && /^[A-Z]{3}$/i.test(prefCurRaw.trim())
+          ? prefCurRaw.trim().toUpperCase()
+          : "MYR";
       return {
       profileId: user.providerProfile?.id || null,
       id: user.id,
       name: user.name,
+      preferredCurrency,
       email: user.email,
       allowMessages,
       avatar: user.providerProfile?.profileImageUrl || "/placeholder.svg",
@@ -66,6 +74,12 @@ export async function searchProviders(filters) {
           verified: cert.verified,
         })
       ),
+      pricingFxSnapshotDate:
+        user.providerProfile?.fxSnapshotDate ?? null,
+      pricingFxSnapshotSession:
+        user.providerProfile?.fxSnapshotSession ?? null,
+      pricingFxSnapshotRatesJson:
+        user.providerProfile?.fxSnapshotRatesJson ?? null,
     };
     });
 
@@ -85,11 +99,40 @@ export async function searchProviders(filters) {
 }
 
 // Fetch AiDrafts for providers
-export async function getAiDraftsService(referenceIds = null) {
+export async function getAiDraftsService(referenceIds = null, locale = "en") {
   try {
     const { getAiDraftsForProviders } = await import("./model.js");
-    const drafts = await getAiDraftsForProviders(referenceIds);
-    return drafts;
+    const { createProviderAiDraft } = await import(
+      "../../auth/provider/provider-ai-draft.js"
+    );
+    let drafts = await getAiDraftsForProviders(referenceIds);
+    const normalized = normalizeAiLocale(locale);
+
+    if (Array.isArray(referenceIds) && referenceIds.length > 0) {
+      const uniqueIds = [...new Set(referenceIds.filter(Boolean))];
+      const byRef = new Map(drafts.map((d) => [d.referenceId, d]));
+      const idsToEnsure = uniqueIds.filter((id) => {
+        const d = byRef.get(id);
+        return !d || !hasAiDraftSummaryForLocale(d.summary, normalized);
+      });
+      if (idsToEnsure.length > 0) {
+        await Promise.all(
+          idsToEnsure.map(async (id) => {
+            try {
+              await createProviderAiDraft(id);
+            } catch {
+              // Keep listing resilient if one profile fails (e.g. API limits).
+            }
+          }),
+        );
+        drafts = await getAiDraftsForProviders(referenceIds);
+      }
+    }
+
+    return drafts.map((draft) => ({
+      ...draft,
+      summary: getAiDraftSummaryForLocale(draft.summary, normalized),
+    }));
   } catch (error) {
     console.error("Error fetching AiDrafts:", error);
     throw new Error("Failed to fetch AI drafts");
@@ -107,10 +150,17 @@ export async function getProviderDetails(providerId, userId = null) {
     const showPhone = settings.showPhone || false;
     const allowMessages = settings.allowMessages !== false; // Default to true if not set
 
+    const prefCurRaw = provider.settings?.preferredCurrency;
+    const preferredCurrency =
+      typeof prefCurRaw === "string" && /^[A-Z]{3}$/i.test(prefCurRaw.trim())
+        ? prefCurRaw.trim().toUpperCase()
+        : "MYR";
+
     // Transform for frontend
     const transformedProvider = {
       id: provider.id,
       name: provider.name,
+      preferredCurrency,
       // Only include email/phone if privacy settings allow
       email: showEmail ? provider.email : null,
       phone: showPhone ? provider.phone : null,
@@ -157,6 +207,12 @@ export async function getProviderDetails(providerId, userId = null) {
           verified: cert.verified,
         })
       ),
+      pricingFxSnapshotDate:
+        provider.providerProfile?.fxSnapshotDate ?? null,
+      pricingFxSnapshotSession:
+        provider.providerProfile?.fxSnapshotSession ?? null,
+      pricingFxSnapshotRatesJson:
+        provider.providerProfile?.fxSnapshotRatesJson ?? null,
     };
 
     return transformedProvider;
@@ -214,9 +270,7 @@ export async function getProviderPortfolio(providerId) {
 export async function getProviderCompletedProjects(providerId) {
   try {
     const { PrismaClient } = await import("@prisma/client");
-    const prisma = new PrismaClient();
-
-    const projects = await prisma.project.findMany({
+const projects = await prisma.project.findMany({
       where: {
         providerId: providerId,
         status: "COMPLETED",
@@ -373,10 +427,18 @@ export async function getSavedProvidersService(userId, page = 1, limit = 20) {
     );
 
     // Transform for frontend
-    const transformedProviders = result.providers.map((user) => ({
+    const transformedProviders = result.providers.map((user) => {
+      const settings = user.settings || {};
+      const prefCurRaw = settings.preferredCurrency;
+      const preferredCurrency =
+        typeof prefCurRaw === "string" && /^[A-Z]{3}$/i.test(prefCurRaw.trim())
+          ? prefCurRaw.trim().toUpperCase()
+          : "MYR";
+      return {
       id: user.id,
       name: user.name,
       email: user.email,
+      preferredCurrency,
       avatar: user.providerProfile?.profileImageUrl || "/placeholder.svg",
       major: user.providerProfile?.major || "ICT Professional",
       company: user.providerProfile?.website || "Freelancer",
@@ -416,7 +478,8 @@ export async function getSavedProvidersService(userId, page = 1, limit = 20) {
           verified: cert.verified,
         })
       ),
-    }));
+    };
+    });
 
     return {
       providers: transformedProviders,
@@ -448,9 +511,7 @@ export async function getProviderStatistics(providerId) {
 export async function getFilterOptions() {
   try {
     const { PrismaClient } = await import("@prisma/client");
-    const prisma = new PrismaClient();
-
-    // Get unique skills for categories
+// Get unique skills for categories
     const skillsResult = await prisma.providerProfile.findMany({
       select: {
         skills: true,

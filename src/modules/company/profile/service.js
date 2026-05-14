@@ -79,8 +79,8 @@ class CompanyProfileService {
         return responseDto.toResponse();
       }
 
-      // Extract User-level fields (name, phone); update profile with the rest
-      const { phone, name, ...profileUpdate } = updateData;
+      // Extract User-level fields (name, email, phone); update profile with the rest
+      const { phone, email, name, ...profileUpdate } = updateData;
       const dto = new CompanyProfileUpdateDto(profileUpdate);
       dto.validate();
 
@@ -116,9 +116,19 @@ class CompanyProfileService {
           profile.user = { ...profile.user, name: updatedUser.name };
         }
       }
-      // If phone provided and user has no phone yet, set it (edit profile can add phone once)
+      // If email provided, update user email
+      if (email != null && String(email).trim() !== "") {
+        const updatedUser = await CompanyProfileModel.updateUserEmail(
+          userId,
+          email,
+        );
+        if (updatedUser && profile.user) {
+          profile.user = { ...profile.user, email: updatedUser.email };
+        }
+      }
+      // If phone provided, update user phone
       if (phone != null && String(phone).trim() !== "") {
-        const updatedUser = await CompanyProfileModel.updateUserPhoneIfEmpty(
+        const updatedUser = await CompanyProfileModel.updateUserPhone(
           userId,
           phone,
         );
@@ -152,7 +162,7 @@ class CompanyProfileService {
       if (exists) {
         return await this.updateProfile(userId, profileData);
       } else {
-        const { phone, name, ...createData } = profileData;
+        const { phone, email, name, ...createData } = profileData;
         const result = await this.createProfile(userId, createData);
         // If name provided, update user name (company name)
         if (name != null && String(name).trim() !== "") {
@@ -164,9 +174,19 @@ class CompanyProfileService {
             result.user = { ...result.user, name: updatedUser.name };
           }
         }
-        // If phone provided and user has no phone yet, set it
+        // If email provided, update user email
+        if (email != null && String(email).trim() !== "") {
+          const updatedUser = await CompanyProfileModel.updateUserEmail(
+            userId,
+            email,
+          );
+          if (updatedUser && result.user) {
+            result.user = { ...result.user, email: updatedUser.email };
+          }
+        }
+        // If phone provided, update user phone
         if (phone != null && String(phone).trim() !== "") {
-          const updatedUser = await CompanyProfileModel.updateUserPhoneIfEmpty(
+          const updatedUser = await CompanyProfileModel.updateUserPhone(
             userId,
             phone,
           );

@@ -2,7 +2,17 @@
 import { prisma } from "./model.js";
 import { SendProposalDto, GetProposalsDto } from "./dto.js";
 import { createNotification } from "../../notifications/service.js";
-import { generateBidExplanationForStorage } from "../../company/project-requests/bid-explanation.js";
+import {
+  generateBidExplanationForStorage,
+  parseAiFitExplanationByLocale,
+} from "../../company/project-requests/bid-explanation.js";
+import { invalidateRecommendationsCache } from "../opportunities/recommended-service.js";
+import {
+  convertWithSnapshot,
+  fetchLatestFxSnapshot,
+  hasCurrencyInSnapshot,
+  normalizeCurrencyCode,
+} from "../../fx/service.js";
 
 export async function sendProposal(dto) {
   try {
@@ -45,15 +55,89 @@ export async function sendProposal(dto) {
       throw new Error("You cannot propose to your own service request");
     }
 
-    // Check if bid amount is within the budget range
-    if (dto.bidAmount < serviceRequest.budgetMin || dto.bidAmount > serviceRequest.budgetMax) {
-      throw new Error("Bid amount must be within the specified budget range");
-    }
-
     // Normalize attachment URLs (ensure array of strings for Prisma)
     const attachmentUrls = Array.isArray(dto.attachmentUrls)
       ? dto.attachmentUrls.filter((s) => s != null && String(s).trim() !== "")
       : [];
+
+    const settingsRow = await prisma.settings.findUnique({
+      where: { userId: dto.providerId },
+      select: { preferredCurrency: true },
+    });
+    const proposalCurrencyCode = normalizeCurrencyCode(
+      settingsRow?.preferredCurrency || "MYR",
+    );
+    const requestCurrencyCode = normalizeCurrencyCode(serviceRequest.currencyCode || "MYR");
+    const snapshotRatesMap = serviceRequest.fxSnapshotRatesJson || null;
+
+    let fxDate = serviceRequest.fxSnapshotDate || null;
+    let fxSession = serviceRequest.fxSnapshotSession || null;
+    let fxQuote = serviceRequest.fxSnapshotQuote || "RM";
+    let ratesMap = snapshotRatesMap;
+
+    if (!ratesMap) {
+      const liveFx = await fetchLatestFxSnapshot();
+      ratesMap = liveFx.ratesMap;
+      fxDate = liveFx.date;
+      fxSession = liveFx.session;
+      fxQuote = liveFx.quote;
+    }
+
+    if (!hasCurrencyInSnapshot(proposalCurrencyCode, ratesMap)) {
+      throw new Error("Provider preferred currency is not supported for conversion");
+    }
+    if (!hasCurrencyInSnapshot(requestCurrencyCode, ratesMap)) {
+      throw new Error("Project currency is not supported for conversion");
+    }
+
+    const convertedBidAmount =
+      proposalCurrencyCode === requestCurrencyCode
+        ? dto.bidAmount
+        : Number.isFinite(dto.bidAmountProject) && dto.bidAmountProject > 0
+          ? dto.bidAmountProject
+          : convertWithSnapshot({
+              amount: dto.bidAmount,
+              fromCurrencyCode: proposalCurrencyCode,
+              toCurrencyCode: requestCurrencyCode,
+              ratesMap,
+            });
+
+    if (convertedBidAmount == null || convertedBidAmount <= 0) {
+      throw new Error("Failed to convert proposed bid amount");
+    }
+
+    const normalizedMilestones = (dto.milestones || []).map((milestone) => {
+      const convertedAmount =
+        proposalCurrencyCode === requestCurrencyCode
+          ? Number(milestone.amount)
+          : Number.isFinite(milestone.amountProject) && milestone.amountProject > 0
+            ? Number(milestone.amountProject)
+            : convertWithSnapshot({
+                amount: Number(milestone.amount),
+                fromCurrencyCode: proposalCurrencyCode,
+                toCurrencyCode: requestCurrencyCode,
+                ratesMap,
+              });
+      if (convertedAmount == null || convertedAmount <= 0) {
+        throw new Error("Failed to convert milestone amount");
+      }
+      return {
+        ...milestone,
+        amount: Number(Number(convertedAmount).toFixed(2)),
+      };
+    });
+
+    const roundedConvertedBid = Number(Number(convertedBidAmount).toFixed(2));
+    const milestoneTotal = normalizedMilestones.reduce(
+      (sum, m) => sum + Number(m.amount || 0),
+      0,
+    );
+    const roundedMilestoneTotal = Number(milestoneTotal.toFixed(2));
+    if (Math.abs(roundedMilestoneTotal - roundedConvertedBid) > 0.01) {
+      throw new Error(
+        `Total of milestones (${roundedMilestoneTotal}) must equal your bid amount (${roundedConvertedBid}) in project currency`,
+      );
+    }
 
     // Create the proposal with milestones in a transaction
     const proposal = await prisma.$transaction(async (tx) => {
@@ -62,7 +146,12 @@ export async function sendProposal(dto) {
         data: {
           providerId: dto.providerId,
           serviceRequestId: dto.serviceRequestId,
-          bidAmount: dto.bidAmount,
+          bidAmount: roundedConvertedBid,
+          bidAmountOriginal: dto.bidAmount,
+          bidCurrencyCode: proposalCurrencyCode,
+          bidConversionDate: fxDate,
+          bidConversionSession: fxSession,
+          bidConversionQuote: fxQuote,
           deliveryTime: dto.deliveryTime,
           coverLetter: dto.coverLetter,
           attachmentUrls,
@@ -71,9 +160,9 @@ export async function sendProposal(dto) {
       });
 
       // Create proposal milestones if provided (use daysFromStart; dueDate is legacy)
-      if (dto.milestones && dto.milestones.length > 0) {
+      if (normalizedMilestones.length > 0) {
         await tx.proposalMilestone.createMany({
-          data: dto.milestones.map((milestone, index) => ({
+          data: normalizedMilestones.map((milestone, index) => ({
             proposalId: newProposal.id,
             title: milestone.title,
             description: milestone.description,
@@ -127,6 +216,11 @@ export async function sendProposal(dto) {
               select: {
                 name: true,
                 email: true,
+                settings: {
+                  select: {
+                    locale: true,
+                  },
+                },
                 customerProfile: {
                   select: {
                     companySize: true,
@@ -147,13 +241,25 @@ export async function sendProposal(dto) {
 
     // Generate AI fit explanation once and store in DB (saves tokens on every view)
     try {
-      const aiExplanation = await generateBidExplanationForStorage(completeProposal);
+      const customerLocale =
+        completeProposal?.serviceRequest?.customer?.settings?.locale || "en";
+      const aiExplanation = await generateBidExplanationForStorage(
+        completeProposal,
+        customerLocale,
+      );
       if (aiExplanation) {
+        const aiMap = parseAiFitExplanationByLocale(completeProposal.aiFitExplanation);
+        const localeKey = String(customerLocale || "en").toLowerCase().startsWith("id")
+          ? "id"
+          : String(customerLocale || "en").toLowerCase().startsWith("ar")
+            ? "ar"
+            : "en";
+        aiMap[localeKey] = aiExplanation;
         await prisma.proposal.update({
           where: { id: proposal.id },
-          data: { aiFitExplanation: aiExplanation },
+          data: { aiFitExplanation: aiMap },
         });
-        completeProposal.aiFitExplanation = aiExplanation;
+        completeProposal.aiFitExplanation = aiMap;
       }
     } catch (aiErr) {
       console.error("Failed to generate AI fit explanation for proposal:", aiErr);
@@ -167,14 +273,18 @@ export async function sendProposal(dto) {
         userId: serviceRequest.customerId,
         title: "New Proposal Received",
         type: "proposal",
-        content: `You have received a new proposal from ${providerName} for "${serviceRequest.title}". Bid amount: RM ${dto.bidAmount.toFixed(2)}`,
+        content: `You have received a new proposal from ${providerName} for "${serviceRequest.title}". Bid amount: ${requestCurrencyCode} ${Number(convertedBidAmount).toFixed(2)}`,
         metadata: {
           proposalId: proposal.id,
           serviceRequestId: dto.serviceRequestId,
           serviceRequestTitle: serviceRequest.title,
           providerId: dto.providerId,
           providerName: completeProposal.provider?.name || null,
-          bidAmount: dto.bidAmount,
+          bidAmountOriginal: dto.bidAmount,
+          bidAmountConverted: convertedBidAmount,
+          bidCurrencyCode: proposalCurrencyCode,
+          projectCurrencyCode: requestCurrencyCode,
+          bidConversionDate: fxDate,
           eventType: "new_proposal",
           linkPath: `/customer/projects/${dto.serviceRequestId}`,
         },
@@ -183,6 +293,8 @@ export async function sendProposal(dto) {
       // Log error but don't fail the proposal creation
       console.error("Failed to notify company of new proposal:", notificationError);
     }
+
+    invalidateRecommendationsCache(dto.providerId);
 
     return completeProposal;
   } catch (error) {

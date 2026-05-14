@@ -4,6 +4,10 @@ import { ChatOpenAI } from "@langchain/openai";
 import { PromptTemplate } from "@langchain/core/prompts";
 import { RunnableSequence } from "@langchain/core/runnables";
 import { calculateMatchScore } from "../../../shared/recommendation-match-score.js";
+import {
+  aiLocaleLanguage,
+  normalizeAiLocale,
+} from "../../../utils/aiDraftLocale.js";
 
 // In-memory cache for recommendations (customerId or "customerId:serviceRequestId" -> { recommendations, cachedAt })
 const recommendationsCache = new Map();
@@ -16,8 +20,8 @@ const MAX_REQUEST_DESCRIPTION_LENGTH = 500;
 /**
  * Get cached recommendations if still valid
  */
-function getCachedRecommendations(customerId) {
-  const cached = recommendationsCache.get(customerId);
+function getCachedRecommendations(cacheKey) {
+  const cached = recommendationsCache.get(cacheKey);
   if (!cached) return null;
 
   const now = Date.now();
@@ -32,15 +36,15 @@ function getCachedRecommendations(customerId) {
   }
 
   // Cache expired, remove it
-  recommendationsCache.delete(customerId);
+  recommendationsCache.delete(cacheKey);
   return null;
 }
 
 /**
  * Cache recommendations
  */
-function setCachedRecommendations(customerId, recommendations) {
-  recommendationsCache.set(customerId, {
+function setCachedRecommendations(cacheKey, recommendations) {
+  recommendationsCache.set(cacheKey, {
     recommendations,
     cachedAt: Date.now(),
   });
@@ -90,7 +94,8 @@ async function generateAIExplanation(
   providerProfile,
   serviceRequest,
   matchScore,
-  isVerified
+  isVerified,
+  locale = "en",
 ) {
   try {
     const model = new ChatOpenAI({
@@ -101,6 +106,7 @@ async function generateAIExplanation(
 
     const prompt = PromptTemplate.fromTemplate(`
 You are an AI assistant helping a company understand why a specific provider is recommended for their service request.
+Output language: {outputLanguage}. Keep names, numbers, and currency codes unchanged.
 
 Provider Profile:
 - Name: {providerName}
@@ -191,6 +197,7 @@ Format: Use bullet points (•) separated by newlines. Return ONLY the bullet po
       timeline: serviceRequest.timeline || "Not specified",
       priority: serviceRequest.priority || "Not specified",
       matchScore: matchScore.toString(),
+      outputLanguage: aiLocaleLanguage(locale),
     });
 
     let content = result.content?.trim() || "";
@@ -218,11 +225,13 @@ Format: Use bullet points (•) separated by newlines. Return ONLY the bullet po
     const verificationWarning = !isVerified
       ? "\n• ⚠️ Warning: This provider has not uploaded official identity documents for verification"
       : "";
-    return `• This provider matches your skills requirements: ${
-      topSkills || "your project needs"
-    }\n• Recommended for: "${
-      serviceRequest.title
-    }"\n• The provider's experience and rating align with your project requirements${verificationWarning}`;
+    if (locale === "id") {
+      return `• Penyedia ini sesuai dengan kebutuhan skill proyek Anda: ${topSkills || "kebutuhan proyek Anda"}\n• Direkomendasikan untuk: "${serviceRequest.title}"\n• Pengalaman dan rating penyedia selaras dengan kebutuhan proyek Anda${verificationWarning}`;
+    }
+    if (locale === "ar") {
+      return `• هذا المزود يطابق متطلبات المهارات في مشروعك: ${topSkills || "احتياجات مشروعك"}\n• موصى به من أجل: "${serviceRequest.title}"\n• خبرة المزود وتقييمه يتوافقان مع متطلبات مشروعك${verificationWarning}`;
+    }
+    return `• This provider matches your skills requirements: ${topSkills || "your project needs"}\n• Recommended for: "${serviceRequest.title}"\n• The provider's experience and rating align with your project requirements${verificationWarning}`;
   }
 }
 
@@ -231,8 +240,15 @@ Format: Use bullet points (•) separated by newlines. Return ONLY the bullet po
  * @param {string} customerId - Company/customer user id
  * @param {string} [serviceRequestId] - Optional. If provided, return top 5 providers for this request only (same algorithm).
  */
-export async function getRecommendedProviders(customerId, serviceRequestId) {
-  const cacheKey = serviceRequestId ? `${customerId}:${serviceRequestId}` : customerId;
+export async function getRecommendedProviders(
+  customerId,
+  serviceRequestId,
+  locale = "en",
+) {
+  const outputLocale = normalizeAiLocale(locale);
+  const cacheKey = serviceRequestId
+    ? `${customerId}:${serviceRequestId}:${outputLocale}`
+    : `${customerId}:${outputLocale}`;
 
   try {
     // Check cache first (2-hour TTL for both global and per-service-request, same as AI find providers)
@@ -343,7 +359,7 @@ export async function getRecommendedProviders(customerId, serviceRequestId) {
 
         const score = calculateMatchScore(
           provider.providerProfile,
-          serviceRequest
+          serviceRequest,
         );
         if (score > bestScore) {
           bestScore = score;
@@ -372,11 +388,18 @@ export async function getRecommendedProviders(customerId, serviceRequestId) {
           const isVerified = provider.isVerified || false;
           const settings = provider.settings || {};
           const allowMessages = settings.allowMessages !== false;
+          const prefCurRaw = settings.preferredCurrency;
+          const preferredCurrency =
+            typeof prefCurRaw === "string" &&
+            /^[A-Z]{3}$/i.test(prefCurRaw.trim())
+              ? prefCurRaw.trim().toUpperCase()
+              : "MYR";
           const explanation = await generateAIExplanation(
             providerProfile,
             serviceRequest,
             matchScore,
-            isVerified
+            isVerified,
+            outputLocale,
           );
 
           return {
@@ -385,6 +408,7 @@ export async function getRecommendedProviders(customerId, serviceRequestId) {
             name: provider.name,
             email: provider.email,
             allowMessages,
+            preferredCurrency,
             avatar: providerProfile.profileImageUrl || null,
             major: providerProfile.major || "ICT Professional",
             rating: parseFloat(providerProfile.rating || 0),
@@ -416,9 +440,14 @@ export async function getRecommendedProviders(customerId, serviceRequestId) {
               proposalCount: serviceRequest._count.proposals,
             },
             aiExplanation: explanation,
+            pricingFxSnapshotDate: providerProfile.fxSnapshotDate ?? null,
+            pricingFxSnapshotSession:
+              providerProfile.fxSnapshotSession ?? null,
+            pricingFxSnapshotRatesJson:
+              providerProfile.fxSnapshotRatesJson ?? null,
           };
-        }
-      )
+        },
+      ),
     );
 
     const cachedAt = Date.now();

@@ -14,6 +14,11 @@ import {
   uploadProfileImage,
   uploadMediaGalleryImages,
 } from "./controller.js";
+import {
+  sendContactChangeOtp,
+  verifyContactChangeOtp,
+  verifyContactIdentity,
+} from "../../profile/contactChangeHandlers.js";
 import { authenticateToken } from "../../../middlewares/auth.js";
 
 const router = express.Router();
@@ -25,6 +30,9 @@ router.put("/", authenticateToken, updateProfile);
 router.patch("/", authenticateToken, upsertProfile);
 router.post("/upload-image", authenticateToken, uploadProfileImage);
 router.post("/upload-media", authenticateToken, uploadMediaGalleryImages);
+router.post("/contact-otp/send", authenticateToken, sendContactChangeOtp);
+router.post("/contact-otp/verify", authenticateToken, verifyContactChangeOtp);
+router.post("/contact-identity/verify", authenticateToken, verifyContactIdentity);
 router.get("/completion", authenticateToken, getProfileCompletion);
 router.get("/stats", authenticateToken, getProfileStats);
 router.get("/comprehensive", authenticateToken, getComprehensiveProfile);

@@ -1,5 +1,4 @@
--- AlterTable
-ALTER TABLE "Settings" ADD COLUMN     "pushNotifications" BOOLEAN NOT NULL DEFAULT true;
+-- pushNotifications is created on "Settings" in baseline migration 20260305184058_initial
 
 -- CreateTable
 CREATE TABLE "push_subscriptions" (

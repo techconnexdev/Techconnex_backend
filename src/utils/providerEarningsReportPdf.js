@@ -1,17 +1,35 @@
 import PDFDocument from "pdfkit";
+import {
+  formatReportMoney,
+  formatReportDate,
+  formatReportDateTime,
+  formatReportMonthYear,
+  providerPdfT,
+  normalizeReportLocale,
+  formatProviderPaymentStatus,
+  intlLocaleForReport,
+} from "./reportPdfI18n.js";
 
 export const createProviderEarningsPDF = async (data) => {
+  const locale = normalizeReportLocale(data.locale);
+  // Numeric aggregates from getEarningsOverview use earningsData.preferredCurrency.
+  const currency = String(
+    data.earningsData?.preferredCurrency ||
+      data.displayCurrency ||
+      "MYR",
+  ).toUpperCase();
+  const t = (key) => providerPdfT(locale, key);
+  const fmt = (amount) => formatReportMoney(amount, currency, locale);
+
   const doc = new PDFDocument({
     margin: 50,
     size: "A4",
     bufferPages: true,
   });
 
-  // Collect PDF chunks in memory instead of writing to disk
   const chunks = [];
   doc.on("data", (chunk) => chunks.push(chunk));
 
-  // Colors
   const colors = {
     primary: "#2c5aa0",
     secondary: "#34495e",
@@ -23,18 +41,16 @@ export const createProviderEarningsPDF = async (data) => {
     border: "#bdc3c7",
   };
 
-  // Helper function to draw rounded rectangles
   const drawRoundedRect = (x, y, width, height, radius, color) => {
     doc.roundedRect(x, y, width, height, radius).fill(color);
   };
 
-  // Improved table row function with dynamic column widths
   const createTableRow = (
     y,
     columns,
     colWidths,
     isHeader = false,
-    rowColor = null
+    rowColor = null,
   ) => {
     const rowHeight = 25;
 
@@ -57,31 +73,33 @@ export const createProviderEarningsPDF = async (data) => {
       x += colWidths[index];
     });
 
-    // Border
     doc.strokeColor(colors.border).lineWidth(0.5);
     doc.rect(50, y, doc.page.width - 100, rowHeight).stroke();
 
     return y + rowHeight;
   };
 
-  // ==========================
-  // HEADER WITH STYLING
-  // ==========================
+  const generated =
+    data.generatedAt instanceof Date
+      ? data.generatedAt
+      : data.generatedAt
+        ? new Date(data.generatedAt)
+        : new Date();
+
   drawRoundedRect(0, 0, doc.page.width, 120, 0, colors.primary);
 
   doc
     .fontSize(24)
     .fillColor("#ffffff")
     .font("Helvetica-Bold")
-    .text("Earnings Analytics Report", 50, 40, { align: "center" });
+    .text(t("title"), 50, 40, { align: "center" });
 
   doc
     .fontSize(12)
     .fillColor("rgba(255,255,255,0.8)")
     .font("Helvetica")
-    .text("Comprehensive Earnings Overview", 50, 70, { align: "center" });
+    .text(t("subtitle"), 50, 70, { align: "center" });
 
-  // Info box
   doc
     .roundedRect(50, 100, doc.page.width - 100, 60, 5)
     .fill("#ffffff")
@@ -91,25 +109,22 @@ export const createProviderEarningsPDF = async (data) => {
     .fontSize(9)
     .fillColor(colors.secondary)
     .font("Helvetica-Bold")
-    .text("Report Details:", 65, 115);
+    .text(t("reportDetails"), 65, 115);
 
   doc
     .font("Helvetica")
     .fillColor(colors.dark)
-    .text(`Generated: ${data.generatedAt}`, 65, 130)
-    .text(`Provider: ${data.generatedFor}`, 65, 145);
+    .text(`${t("generated")} ${formatReportDateTime(generated, locale)}`, 65, 130)
+    .text(`${t("roleLabel")} ${data.generatedFor}`, 65, 145);
 
   doc.moveDown(4);
 
-  // ==========================
-  // SECTION 1 — EARNINGS OVERVIEW CARDS
-  // ==========================
   const sectionY = 200;
   doc
     .fontSize(16)
     .fillColor(colors.primary)
     .font("Helvetica-Bold")
-    .text("1. Earnings Overview", 50, sectionY)
+    .text(t("s1"), 50, sectionY)
     .moveDown(0.5);
 
   doc
@@ -127,121 +142,93 @@ export const createProviderEarningsPDF = async (data) => {
   let cardX = 50;
   let cardY = doc.y;
 
-  // Card 1: Total Earnings
   drawRoundedRect(cardX, cardY, cardWidth, cardHeight, 8, colors.light);
   doc
     .fontSize(10)
     .fillColor(colors.secondary)
-    .text("Total Earnings", cardX + 15, cardY + 15);
+    .text(t("totalEarnings"), cardX + 15, cardY + 15);
   doc
     .fontSize(14)
     .fillColor(colors.success)
     .font("Helvetica-Bold")
-    .text(
-      `RM ${earningsData.totalEarnings.toLocaleString()}`,
-      cardX + 15,
-      cardY + 35
-    );
+    .text(fmt(earningsData.totalEarnings), cardX + 15, cardY + 35);
 
-  // Card 2: This Month
   cardX += cardWidth + 20;
   drawRoundedRect(cardX, cardY, cardWidth, cardHeight, 8, colors.light);
   doc
     .fontSize(10)
     .fillColor(colors.secondary)
     .font("Helvetica")
-    .text("This Month", cardX + 15, cardY + 15);
+    .text(t("thisMonth"), cardX + 15, cardY + 15);
   doc
     .fontSize(14)
     .fillColor(colors.primary)
     .font("Helvetica-Bold")
-    .text(
-      `RM ${earningsData.thisMonth.toLocaleString()}`,
-      cardX + 15,
-      cardY + 35
-    );
+    .text(fmt(earningsData.thisMonth), cardX + 15, cardY + 35);
 
-  // Second row of cards
   cardX = 50;
   cardY += cardHeight + 15;
 
-  // Card 3: Available Balance
   drawRoundedRect(cardX, cardY, cardWidth, cardHeight, 8, colors.light);
   doc
     .fontSize(10)
     .fillColor(colors.secondary)
-    .text("Available Balance", cardX + 15, cardY + 15);
+    .text(t("availableBalance"), cardX + 15, cardY + 15);
   doc
     .fontSize(14)
     .fillColor(colors.success)
     .font("Helvetica-Bold")
-    .text(
-      `RM ${earningsData.availableBalance.toLocaleString()}`,
-      cardX + 15,
-      cardY + 35
-    );
+    .text(fmt(earningsData.availableBalance), cardX + 15, cardY + 35);
 
-  // Card 4: Pending Payments
   cardX += cardWidth + 20;
   drawRoundedRect(cardX, cardY, cardWidth, cardHeight, 8, colors.light);
   doc
     .fontSize(10)
     .fillColor(colors.secondary)
-    .text("Pending Payments", cardX + 15, cardY + 15);
+    .text(t("pendingPayments"), cardX + 15, cardY + 15);
   doc
     .fontSize(14)
     .fillColor(colors.warning)
     .font("Helvetica-Bold")
-    .text(
-      `RM ${earningsData.pendingPayments.toLocaleString()}`,
-      cardX + 15,
-      cardY + 35
-    );
+    .text(fmt(earningsData.pendingPayments), cardX + 15, cardY + 35);
 
-  // Third row of cards
   cardX = 50;
   cardY += cardHeight + 15;
 
-  // Card 5: Monthly Growth
   drawRoundedRect(cardX, cardY, cardWidth, cardHeight, 8, colors.light);
   doc
     .fontSize(10)
     .fillColor(colors.secondary)
-    .text("Monthly Growth", cardX + 15, cardY + 15);
+    .text(t("monthlyGrowth"), cardX + 15, cardY + 15);
   doc
     .fontSize(14)
-    .fillColor(earningsData.monthlyGrowth >= 0 ? colors.success : colors.danger)
+    .fillColor(
+      earningsData.monthlyGrowth >= 0 ? colors.success : colors.danger,
+    )
     .font("Helvetica-Bold")
     .text(
-      `${
-        earningsData.monthlyGrowth >= 0 ? "+" : ""
-      }${earningsData.monthlyGrowth.toFixed(2)}%`,
+      `${earningsData.monthlyGrowth >= 0 ? "+" : ""}${new Intl.NumberFormat(
+        intlLocaleForReport(locale),
+        { maximumFractionDigits: 2 },
+      ).format(earningsData.monthlyGrowth)}%`,
       cardX + 15,
-      cardY + 35
+      cardY + 35,
     );
 
-  // Card 6: Average Project Value
   cardX += cardWidth + 20;
   drawRoundedRect(cardX, cardY, cardWidth, cardHeight, 8, colors.light);
   doc
     .fontSize(10)
     .fillColor(colors.secondary)
-    .text("Avg Project Value", cardX + 15, cardY + 15);
+    .text(t("avgProjectValue"), cardX + 15, cardY + 15);
   doc
     .fontSize(14)
     .fillColor(colors.dark)
     .font("Helvetica-Bold")
-    .text(
-      `RM ${earningsData.averageProjectValue.toLocaleString()}`,
-      cardX + 15,
-      cardY + 35
-    );
+    .text(fmt(earningsData.averageProjectValue), cardX + 15, cardY + 35);
 
   doc.y = cardY + cardHeight + 30;
 
-  // ==========================
-  // SECTION 2 — RECENT PAYMENTS TABLE
-  // ==========================
   if (doc.y > 600) {
     doc.addPage();
     doc.y = 50;
@@ -251,7 +238,7 @@ export const createProviderEarningsPDF = async (data) => {
     .fontSize(16)
     .fillColor(colors.primary)
     .font("Helvetica-Bold")
-    .text("2. Recent Payments", 50, doc.y)
+    .text(t("s2"), 50, doc.y)
     .moveDown(0.5);
 
   doc
@@ -267,19 +254,24 @@ export const createProviderEarningsPDF = async (data) => {
     doc
       .fontSize(10)
       .fillColor(colors.secondary)
-      .text("No recent payments found.", 50, doc.y);
+      .text(t("noRecent"), 50, doc.y);
     doc.moveDown(2);
   } else {
-    // Adjusted column widths: #, Project, Client, Amount, Date, Status
-    // Total page width: 595, margins: 50 each side = 495 available
-    // Distribution: 30 + 150 + 130 + 85 + 75 + 25 = 495
-    const paymentColWidths = [30, 150, 130, 85, 75, 25];
+    const paymentColWidths = [28, 135, 115, 95, 72, 50];
+    const headerCols = [
+      t("colNum"),
+      t("colProject"),
+      t("colClient"),
+      t("colAmount"),
+      t("colDate"),
+      t("colStatus"),
+    ];
     let currentY = createTableRow(
       doc.y,
-      ["#", "Project", "Client", "Amount", "Date", "Status"],
+      headerCols,
       paymentColWidths,
       true,
-      colors.primary
+      colors.primary,
     );
 
     data.recentPayments.forEach((payment, i) => {
@@ -288,42 +280,42 @@ export const createProviderEarningsPDF = async (data) => {
         currentY = 50;
         currentY = createTableRow(
           currentY,
-          ["#", "Project", "Client", "Amount", "Date", "Status"],
+          headerCols,
           paymentColWidths,
           true,
-          colors.primary
+          colors.primary,
         );
       }
 
       const rowColor = i % 2 === 0 ? "#ffffff" : "#f8f9fa";
-      const status = payment.status || "N/A";
-      const amount =
-        typeof payment.amount === "number"
-          ? `RM ${payment.amount.toLocaleString()}`
-          : payment.amount || "N/A";
+      const statusLabel = formatProviderPaymentStatus(payment.status, locale);
+      const pref =
+        payment.preferredAmount != null && payment.preferredAmount !== ""
+          ? Number(payment.preferredAmount)
+          : null;
+      const amountStr =
+        pref != null && Number.isFinite(pref)
+          ? fmt(pref)
+          : fmt(payment.amount);
       const date = payment.date
-        ? new Date(payment.date).toLocaleDateString()
-        : "N/A";
+        ? formatReportDate(payment.date, locale)
+        : t("na");
 
-      // Truncate long project names and client IDs if needed
-      const project = (payment.project || "N/A").substring(0, 40);
-      const client = (payment.client || "N/A").substring(0, 25);
+      const project = (payment.project || t("na")).substring(0, 40);
+      const client = (payment.client || t("na")).substring(0, 25);
 
       currentY = createTableRow(
         currentY,
-        [i + 1, project, client, amount, date, status],
+        [i + 1, project, client, amountStr, date, statusLabel],
         paymentColWidths,
         false,
-        rowColor
+        rowColor,
       );
     });
 
     doc.y = currentY + 10;
   }
 
-  // ==========================
-  // SECTION 3 — MONTHLY EARNINGS
-  // ==========================
   if (doc.y > 500) {
     doc.addPage();
     doc.y = 50;
@@ -333,7 +325,7 @@ export const createProviderEarningsPDF = async (data) => {
     .fontSize(16)
     .fillColor(colors.primary)
     .font("Helvetica-Bold")
-    .text("3. Monthly Earnings (Last 12 Months)", 50, doc.y)
+    .text(t("s3"), 50, doc.y)
     .moveDown(0.5);
 
   doc
@@ -349,16 +341,22 @@ export const createProviderEarningsPDF = async (data) => {
     doc
       .fontSize(10)
       .fillColor(colors.secondary)
-      .text("No monthly earnings data.", 50, doc.y);
+      .text(t("noMonthly"), 50, doc.y);
     doc.moveDown(2);
   } else {
     const monthlyColWidths = [100, 150, 100, 150];
+    const monthHeader = [
+      t("colMonth"),
+      t("colAmount"),
+      t("colProjects"),
+      t("colAvgPerProject"),
+    ];
     let currentY = createTableRow(
       doc.y,
-      ["Month", "Amount", "Projects", "Avg per Project"],
+      monthHeader,
       monthlyColWidths,
       true,
-      colors.primary
+      colors.primary,
     );
 
     data.monthlyEarnings.forEach((earning, i) => {
@@ -367,39 +365,40 @@ export const createProviderEarningsPDF = async (data) => {
         currentY = 50;
         currentY = createTableRow(
           currentY,
-          ["Month", "Amount", "Projects", "Avg per Project"],
+          monthHeader,
           monthlyColWidths,
           true,
-          colors.primary
+          colors.primary,
         );
       }
 
       const rowColor = i % 2 === 0 ? "#ffffff" : "#f8f9fa";
+      const monthLabel =
+        earning.monthStartIso != null
+          ? formatReportMonthYear(earning.monthStartIso, locale)
+          : earning.month || t("na");
       const amount =
         typeof earning.amount === "number"
-          ? `RM ${earning.amount.toLocaleString()}`
-          : earning.amount || "RM 0";
+          ? fmt(earning.amount)
+          : fmt(0);
       const projects = earning.projects || 0;
       const avgPerProject =
         projects > 0 && typeof earning.amount === "number"
-          ? `RM ${(earning.amount / projects).toFixed(2)}`
-          : "RM 0";
+          ? fmt(earning.amount / projects)
+          : fmt(0);
 
       currentY = createTableRow(
         currentY,
-        [earning.month || "N/A", amount, projects, avgPerProject],
+        [monthLabel, amount, projects, avgPerProject],
         monthlyColWidths,
         false,
-        rowColor
+        rowColor,
       );
     });
 
     doc.y = currentY + 10;
   }
 
-  // ==========================
-  // SECTION 4 — TOP CLIENTS
-  // ==========================
   if (doc.y > 500) {
     doc.addPage();
     doc.y = 50;
@@ -409,7 +408,7 @@ export const createProviderEarningsPDF = async (data) => {
     .fontSize(16)
     .fillColor(colors.primary)
     .font("Helvetica-Bold")
-    .text("4. Top Clients", 50, doc.y)
+    .text(t("s4"), 50, doc.y)
     .moveDown(0.5);
 
   doc
@@ -425,16 +424,22 @@ export const createProviderEarningsPDF = async (data) => {
     doc
       .fontSize(10)
       .fillColor(colors.secondary)
-      .text("No client data available.", 50, doc.y);
+      .text(t("noClients"), 50, doc.y);
     doc.moveDown(2);
   } else {
     const clientColWidths = [40, 200, 150, 100];
+    const topHeader = [
+      t("colNum"),
+      t("colClientId"),
+      t("colTotalPaid"),
+      t("colProjects"),
+    ];
     let currentY = createTableRow(
       doc.y,
-      ["#", "Client ID", "Total Paid", "Projects"],
+      topHeader,
       clientColWidths,
       true,
-      colors.primary
+      colors.primary,
     );
 
     data.topClients.forEach((client, i) => {
@@ -443,34 +448,31 @@ export const createProviderEarningsPDF = async (data) => {
         currentY = 50;
         currentY = createTableRow(
           currentY,
-          ["#", "Client ID", "Total Paid", "Projects"],
+          topHeader,
           clientColWidths,
           true,
-          colors.primary
+          colors.primary,
         );
       }
 
       const rowColor = i % 2 === 0 ? "#ffffff" : "#f8f9fa";
       const totalPaid =
         typeof client.totalPaid === "number"
-          ? `RM ${client.totalPaid.toLocaleString()}`
-          : client.totalPaid || "RM 0";
+          ? fmt(client.totalPaid)
+          : fmt(0);
 
       currentY = createTableRow(
         currentY,
-        [i + 1, client.clientId || "N/A", totalPaid, client.projects || 0],
+        [i + 1, client.clientId || t("na"), totalPaid, client.projects || 0],
         clientColWidths,
         false,
-        rowColor
+        rowColor,
       );
     });
 
     doc.y = currentY + 10;
   }
 
-  // ==========================
-  // SECTION 5 — QUICK STATS
-  // ==========================
   if (doc.y > 600) {
     doc.addPage();
     doc.y = 50;
@@ -480,7 +482,7 @@ export const createProviderEarningsPDF = async (data) => {
     .fontSize(16)
     .fillColor(colors.primary)
     .font("Helvetica-Bold")
-    .text("5. Performance Statistics", 50, doc.y)
+    .text(t("s5"), 50, doc.y)
     .moveDown(0.5);
 
   doc
@@ -498,19 +500,18 @@ export const createProviderEarningsPDF = async (data) => {
   let statsCardX = 50;
   let statsCardY = doc.y;
 
-  // Stat 1: Projects This Month
   drawRoundedRect(
     statsCardX,
     statsCardY,
     statsCardWidth,
     statsCardHeight,
     8,
-    colors.light
+    colors.light,
   );
   doc
     .fontSize(10)
     .fillColor(colors.secondary)
-    .text("Projects This Month", statsCardX + 15, statsCardY + 15);
+    .text(t("projectsThisMonth"), statsCardX + 15, statsCardY + 15);
   doc
     .fontSize(14)
     .fillColor(colors.primary)
@@ -518,10 +519,9 @@ export const createProviderEarningsPDF = async (data) => {
     .text(
       String(quickStats.projectsThisMonth || 0),
       statsCardX + 15,
-      statsCardY + 35
+      statsCardY + 35,
     );
 
-  // Stat 2: Success Rate
   statsCardX += statsCardWidth + 20;
   drawRoundedRect(
     statsCardX,
@@ -529,54 +529,53 @@ export const createProviderEarningsPDF = async (data) => {
     statsCardWidth,
     statsCardHeight,
     8,
-    colors.light
+    colors.light,
   );
   doc
     .fontSize(10)
     .fillColor(colors.secondary)
-    .text("Success Rate", statsCardX + 15, statsCardY + 15);
+    .text(t("successRate"), statsCardX + 15, statsCardY + 15);
   doc
     .fontSize(14)
     .fillColor(colors.success)
     .font("Helvetica-Bold")
     .text(
-      `${(quickStats.successRate || 0).toFixed(1)}%`,
+      `${new Intl.NumberFormat(intlLocaleForReport(locale), {
+        maximumFractionDigits: 1,
+      }).format(quickStats.successRate || 0)}%`,
       statsCardX + 15,
-      statsCardY + 35
+      statsCardY + 35,
     );
 
-  // Second row
   statsCardX = 50;
   statsCardY += statsCardHeight + 15;
 
-  // Stat 3: Repeat Clients
   drawRoundedRect(
     statsCardX,
     statsCardY,
     statsCardWidth,
     statsCardHeight,
     8,
-    colors.light
+    colors.light,
   );
   doc
     .fontSize(10)
     .fillColor(colors.secondary)
-    .text("Repeat Clients", statsCardX + 15, statsCardY + 15);
+    .text(t("repeatClients"), statsCardX + 15, statsCardY + 15);
   doc
     .fontSize(14)
     .fillColor(colors.primary)
     .font("Helvetica-Bold")
     .text(
-      `${(quickStats.repeatClientsPercent || 0).toFixed(1)}%`,
+      `${new Intl.NumberFormat(intlLocaleForReport(locale), {
+        maximumFractionDigits: 1,
+      }).format(quickStats.repeatClientsPercent || 0)}%`,
       statsCardX + 15,
-      statsCardY + 35
+      statsCardY + 35,
     );
 
   doc.y = statsCardY + statsCardHeight + 30;
 
-  // ==========================
-  // FOOTER
-  // ==========================
   doc.end();
 
   return new Promise((resolve, reject) => {

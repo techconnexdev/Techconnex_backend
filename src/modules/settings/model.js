@@ -1,9 +1,5 @@
+import { prisma } from "../../utils/prisma.js";
 // /models/settings.model.js
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
-
 // 🔹 Get all settings for a user
 export const findSettingsByUserId = async (userId) => {
   return await prisma.settings.findUnique({

@@ -25,6 +25,7 @@ export class CreateProjectDto {
     this.category = data.category || "";
     this.budgetMin = data.budgetMin;
     this.budgetMax = data.budgetMax;
+    this.currencyCode = typeof data.currencyCode === "string" ? data.currencyCode.trim().toUpperCase() : "MYR";
     this.skills = data.skills || [];
     
     // Support both old format (timeline string) and new format (timelineAmount + timelineUnit or timelineInDays)
@@ -75,6 +76,7 @@ export class CreateProjectDto {
     if (!this.category || this.category.trim() === "") throw new Error("Category is required");
     if (!this.budgetMin || !this.budgetMax) throw new Error("Budget range is required");
     if (this.budgetMin >= this.budgetMax) throw new Error("Minimum budget must be less than maximum budget");
+    if (!/^[A-Z]{3}$/.test(this.currencyCode)) throw new Error("Valid currency code is required");
     if (!this.customerId) throw new Error("Customer ID is required");
 
     // Requirements and deliverables are now optional markdown strings

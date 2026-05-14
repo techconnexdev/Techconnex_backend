@@ -11,6 +11,7 @@ import {
   findUpcomingPayments,
   findPaymentWithFullDetails,
 } from "./model.js";
+import { convertWithSnapshot, normalizeCurrencyCode } from "../../fx/service.js";
 
 function getMonthRange() {
   const now = new Date();
@@ -118,5 +119,129 @@ export const getPaymentDetailsService = async (paymentId) => {
 
   return payment;
 };
+
+function getCustomerListAmount(payment) {
+  const status = String(payment.status || "").toLowerCase();
+  const isPendingLike = ["pending", "in_progress", "processing"].includes(status);
+  const milestoneAmount = Number(payment.milestone?.amount || 0);
+  const rawAmount = Number(payment.amount || 0);
+  if (isPendingLike) {
+    return Number((milestoneAmount * 1.05).toFixed(2));
+  }
+  return rawAmount;
+}
+
+function convertCustomerAmount(amount, project, displayCurrency) {
+  const from =
+    normalizeCurrencyCode(project?.currencyCode || "MYR") || "MYR";
+  const to = normalizeCurrencyCode(displayCurrency) || "MYR";
+  const value = Number(amount || 0);
+  if (!Number.isFinite(value)) return 0;
+  if (from === to) return value;
+  const converted = convertWithSnapshot({
+    amount: value,
+    fromCurrencyCode: from,
+    toCurrencyCode: to,
+    ratesMap: project?.fxSnapshotRatesJson || null,
+  });
+  return converted == null ? value : Number(converted);
+}
+
+/**
+ * Analytics payload for PDF export: amounts in the customer's display currency,
+ * matching the customer billing page preferred-currency logic.
+ */
+export async function buildBillingAnalyticsPdfData(userId, displayCurrencyCode) {
+  const displayCurrency =
+    normalizeCurrencyCode(displayCurrencyCode) || "MYR";
+  const payments = await getAllTransactions(userId);
+  const currentDate = new Date();
+  const upcomingProjects = await findUpcomingPayments(userId, currentDate);
+
+  const mapped = payments.map((txn) => {
+    const status = String(txn.status || "").toLowerCase();
+    const isRefunded = status === "refunded";
+    const baseAmount = getCustomerListAmount(txn);
+    const project = txn.project;
+    const displayAmount = convertCustomerAmount(
+      baseAmount,
+      project,
+      displayCurrency,
+    );
+    return {
+      id: txn.id,
+      displayAmount,
+      status,
+      type: isRefunded ? "refund" : "payment",
+      createdAt: txn.createdAt,
+      projectTitle: project?.title || "",
+    };
+  });
+
+  const transactionItems = mapped.filter((t) => t.type !== "refund");
+  const now = new Date();
+  const isIncludedSpent = (s) =>
+    ["transferred", "escrow", "escrowed"].includes(s);
+  const isIncludedPending = (s) =>
+    ["pending", "escrow", "escrowed"].includes(s);
+
+  const totalSpent = transactionItems
+    .filter((t) => isIncludedSpent(t.status))
+    .reduce((sum, t) => sum + t.displayAmount, 0);
+
+  const thisMonthSpent = transactionItems
+    .filter((t) => {
+      const d = new Date(t.createdAt);
+      return (
+        isIncludedSpent(t.status) &&
+        d.getMonth() === now.getMonth() &&
+        d.getFullYear() === now.getFullYear()
+      );
+    })
+    .reduce((sum, t) => sum + t.displayAmount, 0);
+
+  const pendingPayments = transactionItems
+    .filter((t) => isIncludedPending(t.status))
+    .reduce((sum, t) => sum + t.displayAmount, 0);
+
+  const averageTransaction =
+    transactionItems.length > 0
+      ? totalSpent / transactionItems.length
+      : 0;
+
+  const transactionsForPdf = mapped.slice(0, 100).map((t) => ({
+    displayAmount: t.displayAmount,
+    projectTitle: t.projectTitle,
+    createdAt: t.createdAt,
+    status: t.status,
+  }));
+
+  const upcomingRows = [];
+  for (const proj of upcomingProjects) {
+    const pc = normalizeCurrencyCode(proj.currencyCode) || "MYR";
+    for (const m of proj.milestones || []) {
+      const raw = Number(m.amount || 0);
+      const converted = convertCustomerAmount(raw, proj, displayCurrency);
+      upcomingRows.push({
+        projectTitle: proj.title || "",
+        projectStatus: String(proj.status || ""),
+        milestoneTitle: m.title || "",
+        amount: converted,
+      });
+    }
+  }
+
+  return {
+    overview: {
+      totalSpent,
+      thisMonthSpent,
+      pendingPayments,
+      averageTransaction,
+    },
+    transactions: transactionsForPdf,
+    upcomingRows,
+    displayCurrency,
+  };
+}
 
 export { getBillingOverview, getTransactionsList, getInvoicesList };

@@ -14,14 +14,81 @@ const MAX_COVER_LETTER = 500;
 const MAX_PROVIDER_BIO = 300;
 const MAX_SKILLS_LIST = 30;
 
+function normalizeOutputLocale(locale) {
+  const code = String(locale || "en").trim().toLowerCase();
+  if (code.startsWith("id")) return "id";
+  if (code.startsWith("ar")) return "ar";
+  return "en";
+}
+
+function outputLanguage(locale) {
+  if (locale === "id") return "Bahasa Indonesia";
+  if (locale === "ar") return "Arabic";
+  return "English";
+}
+
+export function parseAiFitExplanationByLocale(value) {
+  if (!value) return {};
+  if (typeof value === "string") {
+    const text = value.trim();
+    return text ? { en: text } : {};
+  }
+  if (typeof value !== "object" || Array.isArray(value)) return {};
+  const out = {};
+  for (const [key, raw] of Object.entries(value)) {
+    const locale = normalizeOutputLocale(key);
+    const text = typeof raw === "string" ? raw.trim() : "";
+    if (text) out[locale] = text;
+  }
+  return out;
+}
+
+export function getLocalizedAiFitExplanation(value, locale = "en") {
+  const map = parseAiFitExplanationByLocale(value);
+  const wanted = normalizeOutputLocale(locale);
+  return map[wanted] || map.en || map.id || map.ar || "";
+}
+
+export function hasAiFitExplanationForLocale(value, locale = "en") {
+  if (typeof value === "string") {
+    return normalizeOutputLocale(locale) === "en" && value.trim().length > 0;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const wanted = normalizeOutputLocale(locale);
+  const text = value[wanted];
+  return typeof text === "string" && text.trim().length > 0;
+}
+
+function buildLocaleFallbackExplanation(proposal, locale = "en") {
+  const normalized = normalizeOutputLocale(locale);
+  const serviceRequest = proposal?.serviceRequest || {};
+  const provider = proposal?.provider || {};
+  const projectTitle = String(serviceRequest.title || "project");
+  const providerName = String(provider.name || "Provider");
+  const timeline = String(
+    proposal?.deliveryTime || proposal?.timeline || serviceRequest.timeline || "",
+  ).trim();
+  const bidAmount = Number(proposal?.bidAmount ?? 0);
+
+  if (normalized === "id") {
+    return `${providerName} menawarkan pendekatan yang relevan untuk "${projectTitle}" dengan nilai penawaran RM ${bidAmount.toLocaleString()}${timeline ? ` dan estimasi waktu ${timeline}` : ""}. Tinjau detail milestone untuk memastikan alur kerja sesuai kebutuhan proyek Anda.`;
+  }
+  if (normalized === "ar") {
+    return `يقدم ${providerName} عرضا مناسبا لمشروع "${projectTitle}" بقيمة RM ${bidAmount.toLocaleString()}${timeline ? ` ومدة تقديرية ${timeline}` : ""}. راجع تفاصيل المراحل للتأكد من توافق خطة التنفيذ مع متطلبات مشروعك.`;
+  }
+  return `${providerName} appears to be a reasonable fit for "${projectTitle}" with a bid of RM ${bidAmount.toLocaleString()}${timeline ? ` and an estimated timeline of ${timeline}` : ""}. Review the milestone plan to confirm delivery details match your project requirements.`;
+}
+
 /**
  * Generate a short AI explanation for why this bid is a good fit (for hover tooltip).
  * Cached by proposal id.
  */
-export async function generateBidExplanation(proposal) {
+export async function generateBidExplanation(proposal, locale = "en") {
   const proposalId = proposal.id;
-  if (explanationCache.has(proposalId)) {
-    return explanationCache.get(proposalId);
+  const outLocale = normalizeOutputLocale(locale);
+  const cacheKey = `${proposalId}:${outLocale}`;
+  if (explanationCache.has(cacheKey)) {
+    return explanationCache.get(cacheKey);
   }
 
   try {
@@ -38,6 +105,7 @@ export async function generateBidExplanation(proposal) {
     });
 
     const prompt = PromptTemplate.fromTemplate(`You are helping a company understand why a specific bid is a good fit for their project.
+Output language: {outputLanguage}. Keep names, numbers, and currency codes unchanged.
 
 Project: {requestTitle}
 Project description (summary): {requestDescription}
@@ -91,17 +159,18 @@ Write 2–3 short sentences explaining why this bid is a good fit. Consider: bud
       coverLetterExcerpt: coverExcerpt || "No cover letter",
       milestonesText,
       matchScore: (proposal.matchScore ?? 0).toString(),
+      outputLanguage: outputLanguage(outLocale),
     });
 
     let text = (result.content || "").trim();
     if (text.startsWith('"') && text.endsWith('"')) {
       text = text.slice(1, -1);
     }
-    explanationCache.set(proposalId, text);
+    explanationCache.set(cacheKey, text);
     return text;
   } catch (err) {
     console.error("Error generating bid explanation:", err);
-    return "This bid aligns well with your budget, timeline, and requirements.";
+    return buildLocaleFallbackExplanation(proposal, locale);
   }
 }
 
@@ -110,8 +179,9 @@ Write 2–3 short sentences explaining why this bid is a good fit. Consider: bud
  * (with length caps to save tokens). Returns one paragraph: why it fits + drawbacks.
  * Store result in Proposal.aiFitExplanation and reuse everywhere.
  */
-export async function generateBidExplanationForStorage(proposal) {
+export async function generateBidExplanationForStorage(proposal, locale = "en") {
   try {
+    const outLocale = normalizeOutputLocale(locale);
     const provider = proposal.provider || {};
     const profile = provider.providerProfile || {};
     const serviceRequest = proposal.serviceRequest || {};
@@ -142,6 +212,7 @@ export async function generateBidExplanationForStorage(proposal) {
     });
 
     const prompt = PromptTemplate.fromTemplate(`You are an expert evaluator. Based on the full project, the full proposal, and the full provider profile, write a short summary for the company (customer) that will be stored and shown every time they view this bid.
+  Output language: {outputLanguage}. Keep names, numbers, and currency codes unchanged.
 
 PROJECT (Service Request):
 - Title: {requestTitle}
@@ -193,6 +264,7 @@ Be concise and neutral. No bullet points, no headers. Output only the paragraph.
       totalProjects: (profile.totalProjects ?? 0).toString(),
       providerSkills: providerSkills.join(", ") || "Not specified",
       location: profile.location || "Not specified",
+      outputLanguage: outputLanguage(outLocale),
     });
 
     let text = (result.content || "").trim();

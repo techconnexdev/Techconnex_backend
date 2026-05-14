@@ -1,7 +1,4 @@
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
+import { prisma } from "../../utils/prisma.js";
 export const getMessagesBetweenUsers = async (userId, otherUserId) => {
   return prisma.message.findMany({
     where: {

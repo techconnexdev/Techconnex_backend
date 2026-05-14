@@ -1,7 +1,5 @@
 // model.js
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { prisma } from "../../../utils/prisma.js";
 
 /**
  * Get provider earnings summary
@@ -218,6 +216,11 @@ export const findPaymentWithFullDetails = async (paymentId) => {
               phone: true,
               isVerified: true,
               createdAt: true,
+              settings: {
+                select: {
+                  preferredCurrency: true,
+                },
+              },
               providerProfile: {
                 select: {
                   id: true,

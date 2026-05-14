@@ -4,8 +4,9 @@ import { ChatOpenAI } from "@langchain/openai";
 import { PromptTemplate } from "@langchain/core/prompts";
 import { RunnableSequence } from "@langchain/core/runnables";
 import { calculateMatchScore } from "../../../shared/recommendation-match-score.js";
+import { buildBudgetDisplayData } from "../../fx/service.js";
 
-// In-memory cache for recommendations (providerId -> { recommendations, cachedAt })
+// In-memory cache for recommendations (providerId:locale -> { recommendations, cachedAt })
 const recommendationsCache = new Map();
 
 const CACHE_DURATION_MS = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
@@ -13,8 +14,8 @@ const CACHE_DURATION_MS = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
 /**
  * Get cached recommendations if still valid
  */
-function getCachedRecommendations(providerId) {
-  const cached = recommendationsCache.get(providerId);
+function getCachedRecommendations(cacheKey) {
+  const cached = recommendationsCache.get(cacheKey);
   if (!cached) return null;
 
   const now = Date.now();
@@ -29,18 +30,110 @@ function getCachedRecommendations(providerId) {
   }
 
   // Cache expired, remove it
-  recommendationsCache.delete(providerId);
+  recommendationsCache.delete(cacheKey);
   return null;
 }
 
 /**
  * Cache recommendations
  */
-function setCachedRecommendations(providerId, recommendations) {
-  recommendationsCache.set(providerId, {
+function setCachedRecommendations(cacheKey, recommendations) {
+  recommendationsCache.set(cacheKey, {
     recommendations,
     cachedAt: Date.now(),
   });
+}
+
+/**
+ * Invalidate cached AI recommendations for a provider (e.g. after submitting a proposal).
+ */
+export function invalidateRecommendationsCache(providerId) {
+  if (!providerId) return;
+  for (const key of recommendationsCache.keys()) {
+    if (key.startsWith(`${providerId}:`)) {
+      recommendationsCache.delete(key);
+    }
+  }
+}
+
+function normalizeOutputLocale(locale) {
+  const code = String(locale || "en").trim().toLowerCase();
+  if (code.startsWith("id")) return "id";
+  if (code.startsWith("ar")) return "ar";
+  return "en";
+}
+
+function localeLanguageLabel(locale) {
+  if (locale === "id") return "Bahasa Indonesia";
+  if (locale === "ar") return "Arabic";
+  return "English";
+}
+
+/**
+ * Drop stale entries: not OPEN, own request, or provider already proposed.
+ */
+async function filterValidRecommendations(providerId, recommendations) {
+  if (!Array.isArray(recommendations) || recommendations.length === 0) {
+    return [];
+  }
+  const ids = recommendations.map((r) => r.id).filter(Boolean);
+  if (ids.length === 0) return [];
+
+  const [stillOpen, myProposals] = await Promise.all([
+    prisma.serviceRequest.findMany({
+      where: {
+        id: { in: ids },
+        status: "OPEN",
+        NOT: { customerId: providerId },
+      },
+      select: { id: true },
+    }),
+    prisma.proposal.findMany({
+      where: {
+        providerId,
+        serviceRequestId: { in: ids },
+      },
+      select: { serviceRequestId: true },
+    }),
+  ]);
+
+  const openIds = new Set(stillOpen.map((s) => s.id));
+  const proposedIds = new Set(myProposals.map((p) => p.serviceRequestId));
+
+  return recommendations.filter(
+    (r) => r?.id && openIds.has(r.id) && !proposedIds.has(r.id),
+  );
+}
+
+/**
+ * Apply provider preferred currency to budget fields (same as main opportunities list).
+ */
+async function enrichRecommendationsWithPreferredCurrency(
+  providerId,
+  recommendations,
+) {
+  if (!Array.isArray(recommendations) || recommendations.length === 0) {
+    return [];
+  }
+  const settings = await prisma.settings.findUnique({
+    where: { userId: providerId },
+    select: { preferredCurrency: true },
+  });
+  const preferredCurrency = settings?.preferredCurrency || "MYR";
+  return recommendations.map((r) => ({
+    ...r,
+    ...buildBudgetDisplayData(
+      {
+        budgetMin: r.budgetMin,
+        budgetMax: r.budgetMax,
+        currencyCode: r.currencyCode || "MYR",
+        fxSnapshotRatesJson: r.fxSnapshotRatesJson ?? null,
+        fxSnapshotDate: r.fxSnapshotDate,
+        fxSnapshotSession: r.fxSnapshotSession,
+      },
+      preferredCurrency,
+    ),
+  }));
 }
 
 /**
@@ -50,6 +143,7 @@ async function generateAIExplanation(
   providerProfile,
   serviceRequest,
   matchScore,
+  outputLocale = "en",
 ) {
   try {
     const model = new ChatOpenAI({
@@ -59,7 +153,9 @@ async function generateAIExplanation(
     });
 
     const prompt = PromptTemplate.fromTemplate(`
-You are an AI assistant helping a freelance provider understand why a specific opportunity is recommended for them. Address the provider directly using "You" and "Your" - speak to them personally, not about them in third person.
+You are an AI career assistant helping a freelance provider decide whether to pursue an opportunity.
+Address the provider directly using "You" and "Your" (never third person).
+Output language: {outputLanguage}. Keep names, numbers, and currency codes unchanged.
 
 Your Profile:
 - Skills: {providerSkills}
@@ -84,23 +180,20 @@ Service Request:
 
 Match Score: {matchScore}/100
 
-Generate a clear, concise explanation in bullet point format. Use simple bullet points (• or -) to list key points. Address the provider directly using "You" and "Your" throughout.
+Generate a concise decision aid in bullet format.
+Required structure:
+• First bullet: "Fit summary" with your strongest match reason (skill overlap + role/category fit).
+• Next 1-2 bullets: concrete strengths (budget alignment, timeline realism, experience relevance, deliverable clarity).
+• Final 1 bullet: a practical watch-out/risk (scope ambiguity, timeline risk, stack gap, or budget pressure). If risk is low, say why.
 
-Structure your response as follows:
-• Start with 2-3 positive points explaining why this is a good match for YOU (your skills alignment, budget fit, timeline compatibility, your experience match, etc.)
-• Then list 1-2 potential concerns or considerations for YOU (tight deadline, budget mismatch, unclear scope, etc.) if any exist
+Quality rules:
+- Every bullet must reference at least one concrete detail from the inputs (skills, budget, timeline, category, years, etc.).
+- No generic phrases like "good opportunity" without evidence.
+- Keep each bullet to one sentence, plain text.
+- Stay balanced and honest.
+- Keep total output to 3-4 bullets.
 
-Guidelines:
-- Address the provider directly using "You" and "Your" - never use "the provider" or third person
-- Be specific and actionable
-- Use clear, simple language
-- Keep each bullet point to one sentence
-- Focus on the most important factors
-- If there are no significant concerns, only list positives
-- Be honest and balanced
-- Make it feel like a personal recommendation, not a generic analysis
-
-Format: Use bullet points (•) separated by newlines. Return ONLY the bullet points text, no markdown formatting, no code blocks, no quotes, no headers.
+Format: Use "• " bullets separated by newlines. Return ONLY the bullet lines.
 `);
 
     const chain = RunnableSequence.from([prompt, model]);
@@ -131,6 +224,7 @@ Format: Use bullet points (•) separated by newlines. Return ONLY the bullet po
       timeline: serviceRequest.timeline || "Not specified",
       priority: serviceRequest.priority || "Not specified",
       matchScore: matchScore.toString(),
+      outputLanguage: localeLanguageLabel(outputLocale),
     });
 
     let content = result.content?.trim() || "";
@@ -156,6 +250,13 @@ Format: Use bullet points (•) separated by newlines. Return ONLY the bullet po
     console.error("Error generating AI explanation:", error);
     // Return a fallback explanation in bullet point format
     const topSkills = (serviceRequest.skills || []).slice(0, 2).join(", ");
+    const l = String(outputLocale || "en").toLowerCase();
+    if (l.startsWith("id")) {
+      return `• Peluang ini cocok dengan keahlian Anda di ${topSkills || "bidang keahlian Anda"}\n• Proyek ini berada dalam kategori keahlian Anda\n• Tinjau anggaran dan timeline agar sesuai dengan ketersediaan Anda`;
+    }
+    if (l.startsWith("ar")) {
+      return `• هذه الفرصة تتوافق مع مهاراتك في ${topSkills || "مجال خبرتك"}\n• هذا المشروع يقع ضمن فئة خبرتك\n• راجع الميزانية والجدول الزمني للتأكد من توافقهما مع مدى توفرك`;
+    }
     return `• This opportunity matches your skills in ${topSkills || "your expertise area"}\n• The project falls within your category expertise\n• Review the budget and timeline to ensure it aligns with your availability`;
   }
 }
@@ -163,17 +264,40 @@ Format: Use bullet points (•) separated by newlines. Return ONLY the bullet po
 /**
  * Get recommended opportunities for a provider
  */
-export async function getRecommendedOpportunities(providerId) {
+export async function getRecommendedOpportunities(providerId, locale = "en") {
   try {
-    // Check cache first
-    const cached = getCachedRecommendations(providerId);
+    const outputLocale = normalizeOutputLocale(locale);
+    const cacheKey = `${providerId}:${outputLocale}`;
+
+    // Check cache first; re-validate against DB so closed / already-proposed items disappear immediately
+    const cached = getCachedRecommendations(cacheKey);
     if (cached) {
-      return {
-        recommendations: cached.recommendations,
-        cachedAt: cached.cachedAt,
-        nextRefreshAt: cached.nextRefreshAt,
-        isCached: true,
-      };
+      const filtered = await filterValidRecommendations(
+        providerId,
+        cached.recommendations,
+      );
+
+      if (filtered.length === 0 && cached.recommendations.length > 0) {
+        recommendationsCache.delete(cacheKey);
+        // Fall through to full recompute below
+      } else if (filtered.length > 0) {
+        if (filtered.length !== cached.recommendations.length) {
+          recommendationsCache.set(cacheKey, {
+            recommendations: filtered,
+            cachedAt: cached.cachedAt,
+          });
+        }
+        const withDisplay = await enrichRecommendationsWithPreferredCurrency(
+          providerId,
+          filtered,
+        );
+        return {
+          recommendations: withDisplay,
+          cachedAt: cached.cachedAt,
+          nextRefreshAt: cached.nextRefreshAt,
+          isCached: true,
+        };
+      }
     }
 
     // Get provider profile
@@ -272,12 +396,13 @@ export async function getRecommendedOpportunities(providerId) {
       .slice(0, 5); // Take top 5
 
     // Generate AI explanations for each recommendation
-    const recommendations = await Promise.all(
+    const rawRecommendations = await Promise.all(
       scoredRequests.map(async ({ serviceRequest, matchScore }) => {
         const explanation = await generateAIExplanation(
           providerProfile,
           serviceRequest,
           matchScore,
+          outputLocale,
         );
 
         return {
@@ -287,6 +412,11 @@ export async function getRecommendedOpportunities(providerId) {
           category: serviceRequest.category,
           budgetMin: serviceRequest.budgetMin,
           budgetMax: serviceRequest.budgetMax,
+          currencyCode: serviceRequest.currencyCode,
+          fxSnapshotDate: serviceRequest.fxSnapshotDate,
+          fxSnapshotSession: serviceRequest.fxSnapshotSession,
+          fxSnapshotQuote: serviceRequest.fxSnapshotQuote,
+          fxSnapshotRatesJson: serviceRequest.fxSnapshotRatesJson,
           skills: serviceRequest.skills,
           timeline: serviceRequest.timeline,
           priority: serviceRequest.priority,
@@ -300,10 +430,15 @@ export async function getRecommendedOpportunities(providerId) {
       }),
     );
 
+    const recommendations = await enrichRecommendationsWithPreferredCurrency(
+      providerId,
+      rawRecommendations,
+    );
+
     // Cache the recommendations
     const cachedAt = Date.now();
     const nextRefreshAt = cachedAt + CACHE_DURATION_MS;
-    setCachedRecommendations(providerId, recommendations);
+    setCachedRecommendations(cacheKey, recommendations);
 
     return {
       recommendations,

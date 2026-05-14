@@ -9,6 +9,7 @@ router.use(authenticateToken);
 router.use(requireAdmin);
 
 router.get("/", adminProjectController.getAllProjects);
+router.post("/", adminProjectController.createProject);
 router.get("/stats", adminProjectController.getProjectStats);
 router.get("/:id", adminProjectController.getProjectById);
 router.patch("/:id", adminProjectController.updateProject);

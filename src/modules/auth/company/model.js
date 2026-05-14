@@ -1,7 +1,5 @@
-import { PrismaClient, Prisma } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
+import { Prisma } from "@prisma/client";
+import { prisma } from "../../../utils/prisma.js";
 async function findUserById(id) {
   return prisma.user.findUnique({ where: { id } });
 }
@@ -14,6 +12,8 @@ async function createCompanyUser(dto) {
       password: dto.password,
       name: dto.name,
       phone: dto.phone,
+      phoneVerified: dto.phoneVerified ?? false,
+      isGoogleAccount: dto.isGoogleAccount ?? false,
       role: { set: dto.role || ["CUSTOMER"] },
       kycStatus: dto.kycStatus || "pending_verification",
       isVerified: dto.isVerified ?? false,

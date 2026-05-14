@@ -1,5 +1,6 @@
 import { disputeService } from "./service.js";
 
+import { prisma } from "../../../utils/prisma.js";
 export const disputeController = {
   async getAllDisputes(req, res) {
     try {
@@ -40,15 +41,17 @@ export const disputeController = {
   async resolveDispute(req, res) {
     try {
       const { id } = req.params;
-      const { status, resolution } = req.body;
+      let { status, resolution } = req.body;
       const adminId = req.user?.userId || null;
+
+      status = String(status || "").trim().toUpperCase();
+      if (status === "CANCELLED") status = "REJECTED";
       
       // Get admin name from database
       let adminName = "Admin";
       if (adminId) {
         const { PrismaClient } = await import("@prisma/client");
-        const prisma = new PrismaClient();
-        const admin = await prisma.user.findUnique({
+const admin = await prisma.user.findUnique({
           where: { id: adminId },
           select: { name: true },
         });
@@ -91,8 +94,7 @@ export const disputeController = {
       let adminName = "Admin";
       if (adminId) {
         const { PrismaClient } = await import("@prisma/client");
-        const prisma = new PrismaClient();
-        const admin = await prisma.user.findUnique({
+const admin = await prisma.user.findUnique({
           where: { id: adminId },
           select: { name: true },
         });
@@ -101,6 +103,17 @@ export const disputeController = {
         }
       }
       
+      const payoutOverride =
+        req.body.payoutBankName && req.body.payoutAccountNumber
+          ? {
+              bankName: String(req.body.payoutBankName).trim(),
+              accountNumber: String(req.body.payoutAccountNumber).trim(),
+              accountName: req.body.payoutAccountName
+                ? String(req.body.payoutAccountName).trim()
+                : "",
+            }
+          : null;
+
       const result = await disputeService.simulateDisputePayout(
         id,
         refundAmount,
@@ -108,12 +121,50 @@ export const disputeController = {
         resolution,
         adminId,
         adminName,
-        bankTransferRefImageUrl
+        bankTransferRefImageUrl,
+        payoutOverride
       );
       
       res.json({
         success: true,
         message: "Dispute payout processed successfully",
+        ...result,
+      });
+    } catch (error) {
+      res.status(400).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  },
+
+  async manualResolveDispute(req, res) {
+    try {
+      const { id } = req.params;
+      const { resolution, customerPayoutNote, providerPayoutNote } = req.body;
+      const adminId = req.user?.userId || null;
+
+      let adminName = "Admin";
+      if (adminId) {
+        const { PrismaClient } = await import("@prisma/client");
+const admin = await prisma.user.findUnique({
+          where: { id: adminId },
+          select: { name: true },
+        });
+        if (admin?.name) adminName = admin.name;
+      }
+
+      const result = await disputeService.manualResolveDispute(id, {
+        resolution,
+        customerPayoutNote,
+        providerPayoutNote,
+        adminId,
+        adminName,
+      });
+
+      res.json({
+        success: true,
+        message: "Dispute resolved (manual record — no Stripe action)",
         ...result,
       });
     } catch (error) {
@@ -134,8 +185,7 @@ export const disputeController = {
       let adminName = "Admin";
       if (adminId) {
         const { PrismaClient } = await import("@prisma/client");
-        const prisma = new PrismaClient();
-        const admin = await prisma.user.findUnique({
+const admin = await prisma.user.findUnique({
           where: { id: adminId },
           select: { name: true },
         });
@@ -149,6 +199,44 @@ export const disputeController = {
       res.json({
         success: true,
         message: "Milestone returned to IN_PROGRESS",
+        ...result,
+      });
+    } catch (error) {
+      res.status(400).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  },
+
+  async redoProject(req, res) {
+    try {
+      const { id } = req.params;
+      const { resolution } = req.body;
+      const adminId = req.user?.userId || null;
+
+      let adminName = "Admin";
+      if (adminId) {
+        const { PrismaClient } = await import("@prisma/client");
+const admin = await prisma.user.findUnique({
+          where: { id: adminId },
+          select: { name: true },
+        });
+        if (admin?.name) {
+          adminName = admin.name;
+        }
+      }
+
+      const result = await disputeService.redoProject(
+        id,
+        resolution,
+        adminId,
+        adminName,
+      );
+
+      res.json({
+        success: true,
+        message: "Dispute closed; project resumed. Parties may proceed normally.",
         ...result,
       });
     } catch (error) {

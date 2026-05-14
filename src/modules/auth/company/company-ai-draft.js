@@ -1,11 +1,11 @@
-import { PrismaClient } from "@prisma/client";
+
 import { ChatOpenAI } from "@langchain/openai";
 import { PromptTemplate } from "@langchain/core/prompts";
 import { RunnableSequence } from "@langchain/core/runnables";
-
-const prisma = new PrismaClient();
-
+import { prisma } from "../../../utils/prisma.js";
+import { aiLocaleLanguage } from "../../../utils/aiDraftLocale.js";
 /**
+ * 
  * Generate a short AI summary (<=180 chars) for a company/customer profile and save to AiDraft
  * @param {string} customerProfileId - CustomerProfile.id (uuid)
  */
@@ -26,6 +26,7 @@ export async function createCompanyAiDraft(customerProfileId) {
     // Prepare prompt
     const prompt = PromptTemplate.fromTemplate(`
 You are an assistant that writes a concise professional summary for a company/customer profile.
+Output language: {outputLanguage}. Keep company names, numbers, and currency codes unchanged.
 
 Profile data:
 - Name: {name}
@@ -63,40 +64,54 @@ Output only the brief text, nothing else.
       (profile.values || []).slice(0, 3).join(", ") || "Professional";
 
     const chain = RunnableSequence.from([prompt, model]);
-
-    const result = await chain.invoke({
-      name: profile.user?.name || "",
-      industry: profile.industry || "General",
-      location: profile.location || "",
-      companySize: profile.companySize || "",
-      description: (profile.description || "").slice(0, 200),
-      establishedYear: profile.establishedYear?.toString() || "",
-      employeeCount: profile.employeeCount?.toString() || "",
-      mission: (profile.mission || "").slice(0, 200),
-      values,
-      categoriesHiringFor,
-    });
-
-    let text = (result.content || "").trim();
-
-    // Remove code fences or quotes
-    if (text.startsWith("```") && text.endsWith("```")) {
-      text = text.replace(/```[\s\S]*?```/g, "").trim();
-    }
-    if (text.startsWith('"') && text.endsWith('"'))
-      text = text.slice(1, -1).trim();
-
-    // Ensure length <= 180 chars
-    if (text.length > 180) {
-      text = text.slice(0, 177).trim();
-      // end with ellipsis if truncated
-      if (!text.endsWith("...")) text = text.replace(/[\s\S]$/g, "") + "...";
-    }
-
-    // Fallback if model returned empty
-    if (!text) {
-      text = `${profile.industry || "Company"} in ${profile.location || "Malaysia"} looking for ${categoriesHiringFor}`.slice(0, 180);
-    }
+    const fallbackForLocale = (locale) => {
+      const l = String(locale || "en").toLowerCase();
+      const industry = profile.industry || "";
+      const location = profile.location || "";
+      if (l.startsWith("id")) {
+        return `${industry || "Perusahaan"} di ${location || "wilayah Anda"} mencari talenta di ${categoriesHiringFor}.`.slice(0, 180);
+      }
+      if (l.startsWith("ar")) {
+        return `${industry || "شركة"} في ${location || "المنطقة"} تبحث عن مواهب في ${categoriesHiringFor}.`.slice(0, 180);
+      }
+      return `${industry || "Company"} in ${location || "Malaysia"} hiring for ${categoriesHiringFor}.`.slice(0, 180);
+    };
+    const makeSummaryForLocale = async (locale) => {
+      try {
+        const result = await chain.invoke({
+          name: profile.user?.name || "",
+          industry: profile.industry || "General",
+          location: profile.location || "",
+          companySize: profile.companySize || "",
+          description: (profile.description || "").slice(0, 200),
+          establishedYear: profile.establishedYear?.toString() || "",
+          employeeCount: profile.employeeCount?.toString() || "",
+          mission: (profile.mission || "").slice(0, 200),
+          values,
+          categoriesHiringFor,
+          outputLanguage: aiLocaleLanguage(locale),
+        });
+        let text = String(result?.content || "").trim();
+        if (text.startsWith("```") && text.endsWith("```")) {
+          text = text.replace(/```[\s\S]*?```/g, "").trim();
+        }
+        if (text.startsWith('"') && text.endsWith('"')) text = text.slice(1, -1).trim();
+        if (text.length > 180) {
+          text = text.slice(0, 177).trim();
+          if (!text.endsWith("...")) text = text.replace(/[\s\S]$/g, "") + "...";
+        }
+        if (!text) return fallbackForLocale(locale);
+        return text;
+      } catch {
+        return fallbackForLocale(locale);
+      }
+    };
+    const [en, id, ar] = await Promise.all([
+      makeSummaryForLocale("en"),
+      makeSummaryForLocale("id"),
+      makeSummaryForLocale("ar"),
+    ]);
+    const summaryMap = { en, id, ar };
 
     // Upsert: overwrite existing draft for this customer profile (no new records on re-submit)
     const existing = await prisma.aiDraft.findFirst({
@@ -107,7 +122,7 @@ Output only the brief text, nothing else.
     });
 
     const draftData = {
-      summary: text,
+      summary: summaryMap,
       sourceData: {
         name: profile.user?.name || null,
         industry: profile.industry || null,

@@ -149,6 +149,7 @@ CREATE TABLE "Settings" (
     "userId" UUID NOT NULL,
     "emailNotifications" BOOLEAN NOT NULL DEFAULT true,
     "smsNotifications" BOOLEAN NOT NULL DEFAULT false,
+    "pushNotifications" BOOLEAN NOT NULL DEFAULT true,
     "projectUpdates" BOOLEAN NOT NULL DEFAULT true,
     "marketingEmails" BOOLEAN NOT NULL DEFAULT false,
     "weeklyReports" BOOLEAN NOT NULL DEFAULT true,
@@ -159,6 +160,7 @@ CREATE TABLE "Settings" (
     "twoFactorEnabled" BOOLEAN NOT NULL DEFAULT false,
     "lastPasswordChange" TIMESTAMP(3),
     "deletedAt" TIMESTAMP(3),
+    "locale" VARCHAR(10) NOT NULL DEFAULT 'en',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 

@@ -1,6 +1,20 @@
 import { adminProjectService } from "./service.js";
 
 export const adminProjectController = {
+  async createProject(req, res) {
+    try {
+      const { title, description, category, budgetMin, budgetMax, skills, timeline, requirements, deliverables, status, currencyCode, customerId, providerId } = req.body;
+      if (!title) return res.status(400).json({ success: false, error: "Title is required" });
+      if (!customerId) return res.status(400).json({ success: false, error: "Customer ID is required" });
+      if (!providerId) return res.status(400).json({ success: false, error: "Provider ID is required" });
+
+      const project = await adminProjectService.createProject({ title, description, category, budgetMin, budgetMax, skills, timeline, requirements, deliverables, status, currencyCode, customerId, providerId });
+      res.status(201).json({ success: true, data: project });
+    } catch (error) {
+      res.status(400).json({ success: false, error: error.message });
+    }
+  },
+
   async getAllProjects(req, res) {
     try {
       const { status, search } = req.query;

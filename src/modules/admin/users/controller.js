@@ -75,6 +75,24 @@ export const userController = {
     }
   },
 
+  async restoreDeletedAccount(req, res) {
+    try {
+      const { id } = req.params;
+      const user = await userService.restoreDeletedAccount(id);
+
+      res.json({
+        success: true,
+        message: "Account restored successfully",
+        data: user,
+      });
+    } catch (error) {
+      res.status(400).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  },
+
   async updateUser(req, res) {
     try {
       const { id } = req.params;

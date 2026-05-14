@@ -2,9 +2,7 @@
 import Stripe from "stripe";
 import { FRIENDLY_500_MESSAGE } from "../../utils/errors.js";
 import { confirmPaymentSuccess } from "./service.js";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { prisma } from "../../utils/prisma.js";
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
@@ -109,6 +107,9 @@ async function handlePaymentIntentFailed(paymentIntent) {
   try {
     const payment = await prisma.payment.findFirst({
       where: { stripePaymentIntentId: paymentIntent.id },
+      include: {
+        project: { select: { customerId: true } },
+      },
     });
 
     if (payment) {

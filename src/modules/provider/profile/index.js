@@ -1,6 +1,11 @@
 import express from "express";
 import ProviderProfileController from "./controller.js";
 import { authenticateToken } from "../../../middlewares/auth.js";
+import {
+  sendContactChangeOtp,
+  verifyContactChangeOtp,
+  verifyContactIdentity,
+} from "../../profile/contactChangeHandlers.js";
 
 const router = express.Router();
 
@@ -8,6 +13,9 @@ const router = express.Router();
 router.use(authenticateToken);
 
 // Routes
+router.post("/contact-otp/send", sendContactChangeOtp);
+router.post("/contact-otp/verify", verifyContactChangeOtp);
+router.post("/contact-identity/verify", verifyContactIdentity);
 router.get("/", ProviderProfileController.getProfile);
 router.post("/", ProviderProfileController.createProfile);
 router.put("/", ProviderProfileController.updateProfile);

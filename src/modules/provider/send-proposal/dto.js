@@ -4,6 +4,9 @@ export class SendProposalDto {
     this.providerId = data.providerId;
     this.serviceRequestId = data.serviceRequestId;
     this.bidAmount = Number(data.bidAmount);
+    this.bidAmountProject = Number(
+      data.bidAmountProject != null ? data.bidAmountProject : NaN,
+    );
     
     // Support both old format (deliveryTime) and new format (timelineAmount + timelineUnit or timelineInDays)
     if (data.timelineInDays !== undefined) {
@@ -43,6 +46,9 @@ export class SendProposalDto {
       title: (m.title || "").toString().trim(),
       description: (m.description || "").toString(),
       amount: Number(m.amount),
+      amountProject: Number(
+        m.amountProject != null ? m.amountProject : NaN,
+      ),
       dueDate: m.dueDate ? new Date(m.dueDate).toISOString() : null,
       daysFromStart: m.daysFromStart != null ? Number(m.daysFromStart) : null,
     })) : [];
@@ -75,10 +81,20 @@ export class SendProposalDto {
     }
 
     // Tolerance ±2% or 1 unit, whichever is larger
-    const total = this.milestones.reduce((s, m) => s + (Number(m.amount) || 0), 0);
-    const tolerance = Math.max(this.bidAmount * 0.02, 1); // adjust if you prefer
-    if (Math.abs(total - this.bidAmount) > tolerance) {
-      throw new Error("Total milestone amount must approximately match bid amount");
+    const hasProjectBasis =
+      Number.isFinite(this.bidAmountProject) &&
+      this.bidAmountProject > 0 &&
+      this.milestones.some((m) => Number.isFinite(m.amountProject));
+    const total = this.milestones.reduce((s, m) => {
+      const value = hasProjectBasis
+        ? Number(m.amountProject)
+        : Number(m.amount);
+      return s + (Number.isFinite(value) ? value : 0);
+    }, 0);
+    const bidBase = hasProjectBasis ? this.bidAmountProject : this.bidAmount;
+    const tolerance = hasProjectBasis ? 0.01 : Math.max(this.bidAmount * 0.02, 1);
+    if (Math.abs(total - bidBase) > tolerance) {
+      throw new Error("Total milestone amount must match your bid amount");
     }
     let prev = 0;
     const deliveryTimeDays = Number(this.deliveryTime) || 0;

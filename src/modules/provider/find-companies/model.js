@@ -1,8 +1,5 @@
+import { prisma } from "../../../utils/prisma.js";
 // src/modules/provider/find-companies/model.js
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
 // Find companies with filtering and pagination
 export async function findCompanies(filters) {
   const {

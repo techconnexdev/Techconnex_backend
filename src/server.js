@@ -16,11 +16,34 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }));
 
+// CORS: single FRONTEND_URL is not enough when Next runs on another port (e.g. 3001).
+// Set CORS_ORIGINS="http://localhost:3000,http://localhost:3001" to override explicitly.
+function getCorsAllowedOrigins() {
+  if (process.env.CORS_ORIGINS) {
+    return process.env.CORS_ORIGINS.split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  const devLocal = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+  ];
+  const primary = (process.env.FRONTEND_URL || "http://localhost:3000").trim();
+  if (process.env.NODE_ENV === "production") {
+    return [primary];
+  }
+  return [...new Set([primary, ...devLocal])];
+}
+
 // Enable CORS for all routes
-app.use(cors({
-  origin: process.env.FRONTEND_URL || "http://localhost:3000",
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: getCorsAllowedOrigins(),
+    credentials: true,
+  }),
+);
 
 // Log HTTP requests in development
 app.use(morgan("dev"));

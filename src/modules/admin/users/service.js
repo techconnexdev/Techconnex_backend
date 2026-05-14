@@ -43,6 +43,15 @@ export const userService = {
     }
   },
 
+  async restoreDeletedAccount(userId) {
+    try {
+      const user = await userModel.restoreSoftDeletedUser(userId);
+      return user;
+    } catch (error) {
+      throw new Error(`Failed to restore account: ${error.message}`);
+    }
+  },
+
   async updateUser(userId, updateData) {
     try {
       const user = await userModel.updateUser(userId, updateData);

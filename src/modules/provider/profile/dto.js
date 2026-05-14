@@ -117,10 +117,36 @@ class ProviderProfileDto {
   validatePartial() {
     const errors = [];
 
-    // Only validate provided fields (normalize URLs before validation)
-    if (this.bio !== undefined && this.bio.trim().length < 10) {
-      errors.push("Bio must be at least 10 characters long");
+    // Optional strings: whitespace-only means "not set" — omit from update, no validation
+    if (this.major !== undefined && this.major !== null && String(this.major).trim() === "") {
+      this.major = undefined;
     }
+    if (this.location !== undefined && this.location !== null && String(this.location).trim() === "") {
+      this.location = undefined;
+    }
+    if (
+      this.preferredProjectDuration !== undefined &&
+      this.preferredProjectDuration !== null &&
+      String(this.preferredProjectDuration).trim() === ""
+    ) {
+      this.preferredProjectDuration = undefined;
+    }
+
+    // Bio: only enforce min length when the user entered non-empty text
+    if (this.bio !== undefined && this.bio !== null) {
+      const bioTrim = String(this.bio).trim();
+      if (bioTrim.length === 0) {
+        this.bio = undefined;
+      } else if (bioTrim.length < 10) {
+        errors.push("Bio must be at least 10 characters long");
+      } else {
+        this.bio = bioTrim;
+      }
+    } else if (this.bio === null) {
+      this.bio = undefined;
+    }
+
+    // Only validate provided fields (normalize URLs before validation)
 
     if (this.website !== undefined) {
       if (this.website && this.website.trim()) {
@@ -308,6 +334,11 @@ class ProviderProfileResponseDto {
     this.certifications = data.certifications;
     this.portfolios = data.portfolios;
     this.performance = data.performance;
+    this.preferredCurrency = data.preferredCurrency;
+    this.fxSnapshotDate = data.fxSnapshotDate;
+    this.fxSnapshotSession = data.fxSnapshotSession;
+    this.fxSnapshotQuote = data.fxSnapshotQuote;
+    this.fxSnapshotRatesJson = data.fxSnapshotRatesJson;
   }
 
   toResponse() {
@@ -346,6 +377,11 @@ class ProviderProfileResponseDto {
       certifications: this.certifications,
       portfolios: this.portfolios,
       performance: this.performance,
+      preferredCurrency: this.preferredCurrency,
+      fxSnapshotDate: this.fxSnapshotDate,
+      fxSnapshotSession: this.fxSnapshotSession,
+      fxSnapshotQuote: this.fxSnapshotQuote,
+      fxSnapshotRatesJson: this.fxSnapshotRatesJson,
     };
   }
 }

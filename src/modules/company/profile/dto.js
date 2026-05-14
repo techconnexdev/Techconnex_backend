@@ -1,3 +1,30 @@
+import { Prisma } from "@prisma/client";
+
+/** Prisma Decimal rejects empty strings; treat blank input as null. */
+function normalizeAnnualRevenueForPrisma(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const s = typeof value === "string" ? value.trim() : String(value);
+  if (s === "") return null;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  return new Prisma.Decimal(n);
+}
+
+/** Json fields reject empty strings; optional JSON text becomes null when blank. */
+function normalizeBenefitsForPrisma(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string") {
+    const t = value.trim();
+    if (t === "") return null;
+    try {
+      return JSON.parse(t);
+    } catch {
+      return t;
+    }
+  }
+  return value;
+}
+
 class CompanyProfileDto {
   constructor(data) {
     this.description = data.description;
@@ -26,37 +53,32 @@ class CompanyProfileDto {
   validate() {
     const errors = [];
 
-    // Required fields validation
-    if (!this.description || this.description.trim().length < 10) {
-      errors.push("Description must be at least 10 characters long");
-    }
-
-    if (!this.industry) {
-      errors.push("Industry is required");
-    }
-
-    if (!this.location) {
-      errors.push("Location is required");
-    }
-
-    // Optional field validations
+    // Partial-friendly: no required description/industry/location; validate only when provided
     if (this.website && !this.isValidUrl(this.website)) {
       errors.push("Website must be a valid URL");
     }
 
-    if (
-      this.employeeCount &&
-      (this.employeeCount < 1 || this.employeeCount > 1000000)
-    ) {
-      errors.push("Employee count must be between 1 and 1,000,000");
+    const ec =
+      this.employeeCount === undefined || this.employeeCount === null
+        ? NaN
+        : Number(this.employeeCount);
+    if (Number.isFinite(ec) && ec > 0) {
+      if (ec < 1 || ec > 1000000) {
+        errors.push("Employee count must be between 1 and 1,000,000");
+      }
     }
 
-    if (
-      this.establishedYear &&
-      (this.establishedYear < 1800 ||
-        this.establishedYear > new Date().getFullYear())
-    ) {
-      errors.push("Established year must be between 1800 and current year");
+    const ey =
+      this.establishedYear === undefined || this.establishedYear === null
+        ? NaN
+        : Number(this.establishedYear);
+    const currentYear = new Date().getFullYear();
+    if (Number.isFinite(ey) && ey > 0) {
+      if (ey < 1800 || ey > currentYear) {
+        errors.push(
+          "Established year must be between 1800 and current year",
+        );
+      }
     }
 
     if (this.annualRevenue && this.annualRevenue < 0) {
@@ -127,7 +149,7 @@ class CompanyProfileDto {
       companySize: this.companySize,
       employeeCount: this.employeeCount,
       establishedYear: this.establishedYear,
-      annualRevenue: this.annualRevenue,
+      annualRevenue: normalizeAnnualRevenueForPrisma(this.annualRevenue),
       fundingStage: this.fundingStage,
       preferredContractTypes: this.preferredContractTypes,
       averageBudgetRange: this.averageBudgetRange,
@@ -136,7 +158,7 @@ class CompanyProfileDto {
       categoriesHiringFor: this.categoriesHiringFor,
       mission: this.mission,
       values: this.values,
-      benefits: this.benefits,
+      benefits: normalizeBenefitsForPrisma(this.benefits),
       mediaGallery: this.mediaGallery,
     };
   }
@@ -155,14 +177,6 @@ class CompanyProfileUpdateDto {
   validate() {
     const errors = [];
 
-    // Validate only provided fields
-    if (
-      this.description !== undefined &&
-      (!this.description || this.description.trim().length < 10)
-    ) {
-      errors.push("Description must be at least 10 characters long");
-    }
-
     if (this.website && !this.isValidUrl(this.website)) {
       errors.push("Website must be a valid URL");
     }
@@ -170,19 +184,27 @@ class CompanyProfileUpdateDto {
     // profileImageUrl is a file path, not a URL, so skip URL validation
     // It will be validated by the upload middleware
 
-    if (
-      this.employeeCount !== undefined &&
-      (this.employeeCount < 1 || this.employeeCount > 1000000)
-    ) {
-      errors.push("Employee count must be between 1 and 1,000,000");
+    const ec =
+      this.employeeCount === undefined || this.employeeCount === null
+        ? NaN
+        : Number(this.employeeCount);
+    if (Number.isFinite(ec) && ec > 0) {
+      if (ec < 1 || ec > 1000000) {
+        errors.push("Employee count must be between 1 and 1,000,000");
+      }
     }
 
-    if (
-      this.establishedYear !== undefined &&
-      (this.establishedYear < 1800 ||
-        this.establishedYear > new Date().getFullYear())
-    ) {
-      errors.push("Established year must be between 1800 and current year");
+    const ey =
+      this.establishedYear === undefined || this.establishedYear === null
+        ? NaN
+        : Number(this.establishedYear);
+    const currentYear = new Date().getFullYear();
+    if (Number.isFinite(ey) && ey > 0) {
+      if (ey < 1800 || ey > currentYear) {
+        errors.push(
+          "Established year must be between 1800 and current year",
+        );
+      }
     }
 
     if (this.annualRevenue !== undefined && this.annualRevenue < 0) {
@@ -247,8 +269,11 @@ class CompanyProfileUpdateDto {
     const updateData = {};
     Object.keys(this).forEach((key) => {
       if (this[key] !== undefined && this[key] !== null) {
-        // Normalize URLs before saving (but not profileImageUrl as it's a file path, not a URL)
-        if (key === "website") {
+        if (key === "annualRevenue") {
+          updateData[key] = normalizeAnnualRevenueForPrisma(this[key]);
+        } else if (key === "benefits") {
+          updateData[key] = normalizeBenefitsForPrisma(this[key]);
+        } else if (key === "website") {
           updateData[key] =
             typeof this[key] === "string"
               ? this.normalizeUrl(this[key])

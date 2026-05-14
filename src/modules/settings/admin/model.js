@@ -1,8 +1,5 @@
+import { prisma } from "../../../utils/prisma.js";
 // adminSettings/model.js
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
 export const getAdminSettings = async () => {
   let settings = await prisma.adminSettings.findFirst();
 
@@ -10,6 +7,7 @@ export const getAdminSettings = async () => {
     // create initial default settings
     settings = await prisma.adminSettings.create({
       data: {
+        defaultLocale: "en",
         platformName: "TechConnect",
         platformDescription: "Malaysia's Premier ICT Service Platform",
         supportEmail: "support@techconnect.my",
@@ -47,7 +45,6 @@ export const getAdminSettings = async () => {
   // ✅ return the settings (either existing or newly created)
   return settings;
 };
-
 
 export const updateAdminSettings = async (data) => {
   // check if settings exist first

@@ -1,6 +1,22 @@
-import { PrismaClient } from "@prisma/client";
 
-const prisma = new PrismaClient();
+import { convertWithSnapshot, normalizeCurrencyCode } from "../../fx/service.js";
+import { prisma } from "../../../utils/prisma.js";
+function toMyrAmount(value, paymentCurrency, projectCurrency, ratesMap) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount)) return 0;
+  const fromCurrency =
+    normalizeCurrencyCode(paymentCurrency) ||
+    normalizeCurrencyCode(projectCurrency) ||
+    "MYR";
+  if (fromCurrency === "MYR") return amount;
+  const converted = convertWithSnapshot({
+    amount,
+    fromCurrencyCode: fromCurrency,
+    toCurrencyCode: "MYR",
+    ratesMap: ratesMap || null,
+  });
+  return converted == null ? amount : converted;
+}
 
 // Helper function to calculate date range
 function getDateRange(dateRange) {
@@ -40,45 +56,120 @@ function getPreviousPeriod(startDate, endDate) {
 }
 
 export const reportsModel = {
-  async getOverviewStats(dateRange = "last_30_days", customStartDate = null, customEndDate = null) {
-    const { startDate, endDate } = customStartDate && customEndDate
-      ? { startDate: new Date(customStartDate), endDate: new Date(customEndDate) }
-      : getDateRange(dateRange);
+  async getOverviewStats(
+    dateRange = "last_30_days",
+    customStartDate = null,
+    customEndDate = null,
+  ) {
+    const { startDate, endDate } =
+      customStartDate && customEndDate
+        ? {
+            startDate: new Date(customStartDate),
+            endDate: new Date(customEndDate),
+          }
+        : getDateRange(dateRange);
 
     const previousPeriod = getPreviousPeriod(startDate, endDate);
 
-    // Total Revenue (from completed milestone payments)
-    const currentRevenue = await prisma.payment.aggregate({
+    // Total Revenue: platform fee from TRANSFERRED payments (align with admin payments stats)
+    const currentRevenuePayments = await prisma.payment.findMany({
       where: {
-        status: "RELEASED",
-        createdAt: {
-          gte: startDate,
-          lte: endDate,
-        },
+        status: "TRANSFERRED",
+        OR: [
+          {
+            bankTransferDate: {
+              gte: startDate,
+              lte: endDate,
+            },
+          },
+          {
+            AND: [
+              { bankTransferDate: null },
+              {
+                updatedAt: {
+                  gte: startDate,
+                  lte: endDate,
+                },
+              },
+            ],
+          },
+        ],
       },
-      _sum: {
-        amount: true,
+      select: {
+        platformFeeAmount: true,
+        currency: true,
+        project: {
+          select: {
+            currencyCode: true,
+            fxSnapshotRatesJson: true,
+          },
+        },
       },
     });
 
-    const previousRevenue = await prisma.payment.aggregate({
+    const previousRevenuePayments = await prisma.payment.findMany({
       where: {
-        status: "RELEASED",
-        createdAt: {
-          gte: previousPeriod.startDate,
-          lte: previousPeriod.endDate,
-        },
+        status: "TRANSFERRED",
+        OR: [
+          {
+            bankTransferDate: {
+              gte: previousPeriod.startDate,
+              lte: previousPeriod.endDate,
+            },
+          },
+          {
+            AND: [
+              { bankTransferDate: null },
+              {
+                updatedAt: {
+                  gte: previousPeriod.startDate,
+                  lte: previousPeriod.endDate,
+                },
+              },
+            ],
+          },
+        ],
       },
-      _sum: {
-        amount: true,
+      select: {
+        platformFeeAmount: true,
+        currency: true,
+        project: {
+          select: {
+            currencyCode: true,
+            fxSnapshotRatesJson: true,
+          },
+        },
       },
     });
 
-    const totalRevenue = currentRevenue._sum.amount || 0;
-    const prevTotalRevenue = previousRevenue._sum.amount || 0;
-    const revenueGrowth = prevTotalRevenue > 0
-      ? ((totalRevenue - prevTotalRevenue) / prevTotalRevenue) * 100
-      : totalRevenue > 0 ? 100 : 0;
+    const totalRevenue = currentRevenuePayments.reduce(
+      (sum, p) =>
+        sum +
+        toMyrAmount(
+          p.platformFeeAmount,
+          p.currency,
+          p.project?.currencyCode,
+          p.project?.fxSnapshotRatesJson,
+        ),
+      0,
+    );
+    const prevTotalRevenue = previousRevenuePayments.reduce(
+      (sum, p) =>
+        sum +
+        toMyrAmount(
+          p.platformFeeAmount,
+          p.currency,
+          p.project?.currencyCode,
+          p.project?.fxSnapshotRatesJson,
+        ),
+      0,
+    );
+    const revenueGrowth =
+      prevTotalRevenue > 0
+        ? ((totalRevenue - prevTotalRevenue) / prevTotalRevenue) * 100
+        : totalRevenue > 0
+          ? 100
+          : 0;
 
     // Total Users
     const currentUsers = await prisma.user.count({
@@ -99,9 +190,12 @@ export const reportsModel = {
       },
     });
 
-    const userGrowth = previousUsers > 0
-      ? ((currentUsers - previousUsers) / previousUsers) * 100
-      : currentUsers > 0 ? 100 : 0;
+    const userGrowth =
+      previousUsers > 0
+        ? ((currentUsers - previousUsers) / previousUsers) * 100
+        : currentUsers > 0
+          ? 100
+          : 0;
 
     // Total Projects
     const currentProjects = await prisma.project.count({
@@ -122,9 +216,12 @@ export const reportsModel = {
       },
     });
 
-    const projectGrowth = previousProjects > 0
-      ? ((currentProjects - previousProjects) / previousProjects) * 100
-      : currentProjects > 0 ? 100 : 0;
+    const projectGrowth =
+      previousProjects > 0
+        ? ((currentProjects - previousProjects) / previousProjects) * 100
+        : currentProjects > 0
+          ? 100
+          : 0;
 
     // Average Rating
     const currentReviews = await prisma.review.findMany({
@@ -151,17 +248,20 @@ export const reportsModel = {
       },
     });
 
-    const avgRating = currentReviews.length > 0
-      ? currentReviews.reduce((sum, r) => sum + r.rating, 0) / currentReviews.length
-      : 0;
+    const avgRating =
+      currentReviews.length > 0
+        ? currentReviews.reduce((sum, r) => sum + r.rating, 0) /
+          currentReviews.length
+        : 0;
 
-    const prevAvgRating = previousReviews.length > 0
-      ? previousReviews.reduce((sum, r) => sum + r.rating, 0) / previousReviews.length
-      : 0;
+    const prevAvgRating =
+      previousReviews.length > 0
+        ? previousReviews.reduce((sum, r) => sum + r.rating, 0) /
+          previousReviews.length
+        : 0;
 
-    const ratingChange = prevAvgRating > 0
-      ? avgRating - prevAvgRating
-      : avgRating;
+    const ratingChange =
+      prevAvgRating > 0 ? avgRating - prevAvgRating : avgRating;
 
     // Total users count (not just new ones)
     const totalUsers = await prisma.user.count({
@@ -184,10 +284,18 @@ export const reportsModel = {
     };
   },
 
-  async getMonthlyData(dateRange = "last_6_months", customStartDate = null, customEndDate = null) {
-    const { startDate, endDate } = customStartDate && customEndDate
-      ? { startDate: new Date(customStartDate), endDate: new Date(customEndDate) }
-      : getDateRange(dateRange);
+  async getMonthlyData(
+    dateRange = "last_6_months",
+    customStartDate = null,
+    customEndDate = null,
+  ) {
+    const { startDate, endDate } =
+      customStartDate && customEndDate
+        ? {
+            startDate: new Date(customStartDate),
+            endDate: new Date(customEndDate),
+          }
+        : getDateRange(dateRange);
 
     // Generate months array
     const months = [];
@@ -196,21 +304,61 @@ export const reportsModel = {
 
     while (current <= endDate) {
       const monthStart = new Date(current);
-      const monthEnd = new Date(current.getFullYear(), current.getMonth() + 1, 0, 23, 59, 59);
+      const monthEnd = new Date(
+        current.getFullYear(),
+        current.getMonth() + 1,
+        0,
+        23,
+        59,
+        59,
+      );
 
-      // Revenue for this month
-      const revenueData = await prisma.payment.aggregate({
+      // Revenue for this month: transferred platform fee (align with overview card)
+      const monthlyRevenuePayments = await prisma.payment.findMany({
         where: {
-          status: "RELEASED",
-          createdAt: {
-            gte: monthStart,
-            lte: monthEnd,
+          status: "TRANSFERRED",
+          OR: [
+            {
+              bankTransferDate: {
+                gte: monthStart,
+                lte: monthEnd,
+              },
+            },
+            {
+              AND: [
+                { bankTransferDate: null },
+                {
+                  updatedAt: {
+                    gte: monthStart,
+                    lte: monthEnd,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        select: {
+          platformFeeAmount: true,
+          currency: true,
+          project: {
+            select: {
+              currencyCode: true,
+              fxSnapshotRatesJson: true,
+            },
           },
         },
-        _sum: {
-          amount: true,
-        },
       });
+      const monthRevenue = monthlyRevenuePayments.reduce(
+        (sum, p) =>
+          sum +
+          toMyrAmount(
+            p.platformFeeAmount,
+            p.currency,
+            p.project?.currencyCode,
+            p.project?.fxSnapshotRatesJson,
+          ),
+        0,
+      );
 
       // Projects created in this month
       const projects = await prisma.project.count({
@@ -235,7 +383,7 @@ export const reportsModel = {
       months.push({
         month: monthStart.toLocaleString("default", { month: "short" }),
         year: monthStart.getFullYear(),
-        revenue: revenueData._sum.amount || 0,
+        revenue: monthRevenue,
         projects,
         users,
       });
@@ -247,10 +395,18 @@ export const reportsModel = {
     return months;
   },
 
-  async getCategoryBreakdown(dateRange = "last_30_days", customStartDate = null, customEndDate = null) {
-    const { startDate, endDate } = customStartDate && customEndDate
-      ? { startDate: new Date(customStartDate), endDate: new Date(customEndDate) }
-      : getDateRange(dateRange);
+  async getCategoryBreakdown(
+    dateRange = "last_30_days",
+    customStartDate = null,
+    customEndDate = null,
+  ) {
+    const { startDate, endDate } =
+      customStartDate && customEndDate
+        ? {
+            startDate: new Date(customStartDate),
+            endDate: new Date(customEndDate),
+          }
+        : getDateRange(dateRange);
 
     // Get all projects with payments in the date range
     const projects = await prisma.project.findMany({
@@ -327,10 +483,19 @@ export const reportsModel = {
     return result;
   },
 
-  async getTopProviders(dateRange = "last_30_days", limit = 5, customStartDate = null, customEndDate = null) {
-    const { startDate, endDate } = customStartDate && customEndDate
-      ? { startDate: new Date(customStartDate), endDate: new Date(customEndDate) }
-      : getDateRange(dateRange);
+  async getTopProviders(
+    dateRange = "last_30_days",
+    limit = 5,
+    customStartDate = null,
+    customEndDate = null,
+  ) {
+    const { startDate, endDate } =
+      customStartDate && customEndDate
+        ? {
+            startDate: new Date(customStartDate),
+            endDate: new Date(customEndDate),
+          }
+        : getDateRange(dateRange);
 
     // Get providers with their projects and payments (for revenue calculation)
     const providers = await prisma.user.findMany({
@@ -419,13 +584,16 @@ export const reportsModel = {
               providerId: provider.id,
             },
           });
-          
+
           // Use totalProjects from profile (matches what user profile page shows)
           // If profile value is missing or seems incorrect, use direct count
           const profileTotalProjects = provider.providerProfile?.totalProjects;
-          const projectCount = (profileTotalProjects !== null && profileTotalProjects !== undefined && profileTotalProjects >= 0)
-            ? profileTotalProjects
-            : directCount;
+          const projectCount =
+            profileTotalProjects !== null &&
+            profileTotalProjects !== undefined &&
+            profileTotalProjects >= 0
+              ? profileTotalProjects
+              : directCount;
 
           return {
             id: provider.id,
@@ -436,7 +604,7 @@ export const reportsModel = {
               ? parseFloat(provider.providerProfile.rating.toString())
               : 0,
           };
-        })
+        }),
     );
 
     // Sort by revenue and limit
@@ -444,10 +612,19 @@ export const reportsModel = {
     return providerStats.slice(0, limit);
   },
 
-  async getTopCustomers(dateRange = "last_30_days", limit = 5, customStartDate = null, customEndDate = null) {
-    const { startDate, endDate } = customStartDate && customEndDate
-      ? { startDate: new Date(customStartDate), endDate: new Date(customEndDate) }
-      : getDateRange(dateRange);
+  async getTopCustomers(
+    dateRange = "last_30_days",
+    limit = 5,
+    customStartDate = null,
+    customEndDate = null,
+  ) {
+    const { startDate, endDate } =
+      customStartDate && customEndDate
+        ? {
+            startDate: new Date(customStartDate),
+            endDate: new Date(customEndDate),
+          }
+        : getDateRange(dateRange);
 
     // Get customers with their projects and payments (for spending calculation)
     const customers = await prisma.user.findMany({
@@ -546,7 +723,7 @@ export const reportsModel = {
             projects: projectCount,
             spent: spent || 0,
           };
-        })
+        }),
     );
 
     // Sort by spending and limit
@@ -554,10 +731,19 @@ export const reportsModel = {
     return customerStats.slice(0, limit);
   },
 
-  async getCategoryDetails(category, dateRange = "last_30_days", customStartDate = null, customEndDate = null) {
-    const { startDate, endDate } = customStartDate && customEndDate
-      ? { startDate: new Date(customStartDate), endDate: new Date(customEndDate) }
-      : getDateRange(dateRange);
+  async getCategoryDetails(
+    category,
+    dateRange = "last_30_days",
+    customStartDate = null,
+    customEndDate = null,
+  ) {
+    const { startDate, endDate } =
+      customStartDate && customEndDate
+        ? {
+            startDate: new Date(customStartDate),
+            endDate: new Date(customEndDate),
+          }
+        : getDateRange(dateRange);
 
     // Get all projects in this category with payments in the date range
     const projects = await prisma.project.findMany({
@@ -641,13 +827,14 @@ export const reportsModel = {
         });
       });
       projectRevenues.push(projectRevenue);
-      
+
       if (project.providerId) providerIds.add(project.providerId);
       if (project.customerId) customerIds.add(project.customerId);
     });
 
     const projectCount = projects.length;
-    const averageProjectValue = projectCount > 0 ? totalRevenue / projectCount : 0;
+    const averageProjectValue =
+      projectCount > 0 ? totalRevenue / projectCount : 0;
 
     // Get unique providers and customers
     const providers = await prisma.user.findMany({
@@ -685,7 +872,12 @@ export const reportsModel = {
     });
 
     // Get monthly trends for this category
-    const monthlyTrends = await this.getCategoryMonthlyTrends(category, dateRange, customStartDate, customEndDate);
+    const monthlyTrends = await this.getCategoryMonthlyTrends(
+      category,
+      dateRange,
+      customStartDate,
+      customEndDate,
+    );
 
     // Format projects for response
     const formattedProjects = projects.map((project) => {
@@ -701,15 +893,19 @@ export const reportsModel = {
         title: project.title,
         status: project.status,
         createdAt: project.createdAt,
-        provider: project.provider ? {
-          id: project.provider.id,
-          name: project.provider.name,
-          rating: project.provider.providerProfile?.rating || 0,
-        } : null,
-        customer: project.customer ? {
-          id: project.customer.id,
-          name: project.customer.name,
-        } : null,
+        provider: project.provider
+          ? {
+              id: project.provider.id,
+              name: project.provider.name,
+              rating: project.provider.providerProfile?.rating || 0,
+            }
+          : null,
+        customer: project.customer
+          ? {
+              id: project.customer.id,
+              name: project.customer.name,
+            }
+          : null,
         revenue: projectRevenue,
       };
     });
@@ -740,18 +936,34 @@ export const reportsModel = {
     };
   },
 
-  async getCategoryMonthlyTrends(category, dateRange = "last_30_days", customStartDate = null, customEndDate = null) {
-    const { startDate, endDate } = customStartDate && customEndDate
-      ? { startDate: new Date(customStartDate), endDate: new Date(customEndDate) }
-      : getDateRange(dateRange);
+  async getCategoryMonthlyTrends(
+    category,
+    dateRange = "last_30_days",
+    customStartDate = null,
+    customEndDate = null,
+  ) {
+    const { startDate, endDate } =
+      customStartDate && customEndDate
+        ? {
+            startDate: new Date(customStartDate),
+            endDate: new Date(customEndDate),
+          }
+        : getDateRange(dateRange);
 
     // Get monthly data for this category
     const months = [];
     const current = new Date(startDate);
-    
+
     while (current <= endDate) {
       const monthStart = new Date(current.getFullYear(), current.getMonth(), 1);
-      const monthEnd = new Date(current.getFullYear(), current.getMonth() + 1, 0, 23, 59, 59);
+      const monthEnd = new Date(
+        current.getFullYear(),
+        current.getMonth() + 1,
+        0,
+        23,
+        59,
+        59,
+      );
 
       // Get projects in this category for this month
       const monthProjects = await prisma.project.findMany({
@@ -813,4 +1025,3 @@ export const reportsModel = {
 };
 
 export default prisma;
-
